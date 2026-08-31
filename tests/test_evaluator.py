@@ -104,6 +104,24 @@ def test_command_evaluator_reports_invalid_json_and_non_object():
         array({})
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ('{"loss":1,"loss":2}', "duplicate key"),
+        ('{"loss":NaN}', "non-finite"),
+        ('{"loss":' + "9" * 129 + "}", "number longer"),
+        ("[" * 17 + "0" + "]" * 17, "complexity"),
+        (" " * 1_048_577, "byte input limit"),
+    ],
+    ids=["duplicate", "nonfinite", "huge-number", "deep", "oversized"],
+)
+def test_command_evaluator_rejects_strict_json_violations(monkeypatch, payload, message):
+    completed = subprocess.CompletedProcess(["tool"], 0, stdout=payload, stderr="")
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: completed)
+    with pytest.raises(EvaluationError, match=message):
+        CommandEvaluator(["tool"])({})
+
+
 def test_command_evaluator_wraps_timeout(monkeypatch):
     def timeout(*_args, **_kwargs):
         raise subprocess.TimeoutExpired("tool", 1)

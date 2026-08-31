@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from biasweave import __version__
 from biasweave.cli import build_parser, main
 from biasweave.demo import evaluate, ug_bw_ratio
 from biasweave.problem import load_problem
@@ -18,7 +19,7 @@ def test_parser_help_and_version(capsys):
     with pytest.raises(SystemExit) as caught:
         main(["--version"])
     assert caught.value.code == 0
-    assert "BiasWeave 0.1.0" in capsys.readouterr().out
+    assert f"BiasWeave {__version__}" in capsys.readouterr().out
 
 
 def test_validate_command_reports_problem_shape(capsys):
@@ -131,6 +132,60 @@ def test_resume_reports_corrupt_completed_count(tmp_path, capsys):
     )
     assert code == 2
     assert "completed_trials" in capsys.readouterr().err
+
+
+def test_resume_reports_strict_metadata_error_without_traceback(tmp_path, capsys):
+    output = tmp_path / "checkpoint"
+    output.mkdir()
+    (output / "run.json").write_text(
+        '{"completed_trials":1,"completed_trials":2}', encoding="utf-8"
+    )
+    code = main(
+        [
+            "resume",
+            "--problem",
+            str(EXAMPLE),
+            "--evaluator",
+            "python:biasweave.demo:evaluate",
+            "--additional-budget",
+            "2",
+            "--out",
+            str(output),
+        ]
+    )
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "duplicate key" in error
+    assert "Traceback" not in error
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "[NaN]",
+        "[" * 18 + "0" + "]" * 18,
+        '["python",' + "0" * 65_536 + "]",
+    ],
+    ids=["nonfinite", "deep", "oversized"],
+)
+def test_command_transport_rejects_strict_json_violations(payload, tmp_path, capsys):
+    code = main(
+        [
+            "run",
+            "--problem",
+            str(EXAMPLE),
+            "--evaluator",
+            f"command:{payload}",
+            "--budget",
+            "1",
+            "--out",
+            str(tmp_path / "output"),
+        ]
+    )
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "JSON argv array" in error
+    assert "Traceback" not in error
 
 
 def test_demo_evaluator_returns_finite_metrics_for_example_defaults():

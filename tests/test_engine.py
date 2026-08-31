@@ -346,7 +346,8 @@ def test_resume_rejects_malformed_generator_fields(tmp_path, field, value):
     metadata = read_metadata(output / "run.json")
     metadata["generator"][field] = value
     (output / "run.json").write_text(json.dumps(metadata), encoding="utf-8")
-    with pytest.raises(CheckpointError, match="proposal-generator state"):
+    expected = "non-finite number" if field == "radius" else "proposal-generator state"
+    with pytest.raises(CheckpointError, match=expected):
         optimize(
             make_problem(),
             evaluator,

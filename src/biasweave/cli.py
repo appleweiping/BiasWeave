@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from biasweave._strict_json import JSONLimits, StrictJSONError, loads_strict_json
+from biasweave._version import __version__
 from biasweave.archive import Archive
+from biasweave.benchmark import compare_with_random, load_analog_benchmark, sizing_decision
 from biasweave.engine import optimize, validate_checkpoint_trials
 from biasweave.errors import BiasWeaveError, ConfigurationError
 from biasweave.evaluator import CommandEvaluator, load_python_evaluator
@@ -16,6 +21,13 @@ from biasweave.ledger import TrialLedger, read_metadata
 from biasweave.model import RunConfig, Scalar
 from biasweave.problem import load_problem
 from biasweave.results import frontier_table
+
+_COMMAND_JSON_LIMITS = JSONLimits(
+    max_bytes=65_536,
+    max_depth=16,
+    max_nodes=256,
+    max_number_characters=64,
+)
 
 
 def _positive(value: str) -> int:
@@ -40,8 +52,12 @@ def _evaluator(
     if specification.startswith("command:"):
         payload = specification.removeprefix("command:")
         try:
-            argv = json.loads(payload)
-        except json.JSONDecodeError as error:
+            argv = loads_strict_json(
+                payload,
+                limits=_COMMAND_JSON_LIMITS,
+                context="command evaluator JSON",
+            )
+        except StrictJSONError as error:
             raise ConfigurationError(
                 f"command evaluator must contain a JSON argv array: {error}"
             ) from error
@@ -74,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="biasweave",
         description="Deterministic constraint-first multi-objective sizing search.",
     )
-    parser.add_argument("--version", action="version", version="BiasWeave 0.1.0")
+    parser.add_argument("--version", action="version", version=f"BiasWeave {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
     validate = commands.add_parser("validate", help="validate a TOML problem")
@@ -89,6 +105,17 @@ def build_parser() -> argparse.ArgumentParser:
     front = commands.add_parser("front", help="print the feasible Pareto front")
     front.add_argument("--problem", required=True, type=Path)
     front.add_argument("--ledger", required=True, type=Path)
+
+    benchmark = commands.add_parser("benchmark", help="run an analog contract comparison")
+    benchmark.add_argument("--contract", required=True, type=Path)
+    benchmark.add_argument("--budget", required=True, type=_positive)
+    benchmark.add_argument("--seed", type=int, default=0)
+    benchmark.add_argument("--output", type=Path)
+    benchmark.add_argument(
+        "--decision-output",
+        type=Path,
+        help="write the content-bound BiasWeave representative for downstream simulation",
+    )
     return parser
 
 
@@ -150,7 +177,54 @@ def dispatch(arguments: argparse.Namespace) -> int:
         archive = Archive(problem, trials)
         print(frontier_table(archive.frontier))
         return 0
+    if arguments.command == "benchmark":
+        if (
+            arguments.output
+            and arguments.decision_output
+            and arguments.output.resolve() == arguments.decision_output.resolve()
+        ):
+            raise ConfigurationError("--output and --decision-output must be different paths")
+        benchmark = load_analog_benchmark(arguments.contract)
+        comparison = compare_with_random(benchmark, budget=arguments.budget, seed=arguments.seed)
+        decision = sizing_decision(benchmark, comparison) if arguments.decision_output else None
+        rendered = json.dumps(comparison, indent=2, sort_keys=True) + "\n"
+        outputs: list[tuple[Path, str]] = []
+        if arguments.output:
+            outputs.append((arguments.output, rendered))
+        if arguments.decision_output:
+            outputs.append(
+                (
+                    arguments.decision_output,
+                    json.dumps(decision, indent=2, sort_keys=True) + "\n",
+                )
+            )
+        _write_outputs_atomically(outputs)
+        if not arguments.output:
+            print(rendered, end="")
+        return 0
     raise ConfigurationError(f"unsupported command: {arguments.command}")
+
+
+def _write_outputs_atomically(outputs: list[tuple[Path, str]]) -> None:
+    """Stage every benchmark artifact before making a destination visible."""
+
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for destination, content in outputs:
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp"
+            )
+            temporary = Path(temporary_name)
+            staged.append((temporary, destination))
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        for temporary, destination in staged:
+            os.replace(temporary, destination)
+    finally:
+        for temporary, _destination in staged:
+            temporary.unlink(missing_ok=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -163,6 +237,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OSError as error:
         print(f"biasweave: I/O error: {error}", file=sys.stderr)
         return 3
+
+
+def entrypoint() -> None:
+    """Convert the library-friendly return value into a process status."""
+
+    raise SystemExit(main())
 
 
 if __name__ == "__main__":

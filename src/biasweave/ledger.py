@@ -6,11 +6,38 @@ import json
 import math
 import os
 from collections.abc import Iterable, Mapping
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from biasweave._strict_json import (
+    JSONLimits,
+    StrictJSONError,
+    json_node_count,
+    loads_strict_json,
+    read_limited_bytes,
+)
 from biasweave.errors import CheckpointError
 from biasweave.model import Point, Trial, TrialStatus
+
+_MAX_LEDGER_BYTES = 67_108_864
+_MAX_LEDGER_LINE_BYTES = 1_048_576
+_MAX_LEDGER_LINES = 200_000
+_MAX_LEDGER_RECORDS = 100_000
+_MAX_LEDGER_TOTAL_NODES = 2_000_000
+_MAX_METADATA_BYTES = 1_048_576
+_LEDGER_JSON_LIMITS = JSONLimits(
+    max_bytes=_MAX_LEDGER_LINE_BYTES,
+    max_depth=64,
+    max_nodes=10_000,
+    max_number_characters=128,
+)
+_METADATA_JSON_LIMITS = JSONLimits(
+    max_bytes=_MAX_METADATA_BYTES,
+    max_depth=64,
+    max_nodes=10_000,
+    max_number_characters=128,
+)
 
 
 def _number(value: Any, context: str) -> float:
@@ -124,21 +151,55 @@ class TrialLedger:
 
     def read(self) -> list[Trial]:
         try:
-            payload = self.path.read_bytes()
+            payload = read_limited_bytes(
+                self.path,
+                max_bytes=_MAX_LEDGER_BYTES,
+                context="trial ledger",
+            )
         except FileNotFoundError:
             return []
+        except StrictJSONError as error:
+            raise CheckpointError(f"cannot read trial ledger {self.path}: {error}") from error
         except OSError as error:
             raise CheckpointError(f"cannot read trial ledger {self.path}: {error}") from error
         trials: list[Trial] = []
-        lines = payload.splitlines()
-        for index, line in enumerate(lines):
+        physical_lines = 0
+        total_nodes = 0
+        stream = BytesIO(payload)
+        for index, encoded_line in enumerate(stream):
+            physical_lines += 1
+            if physical_lines > _MAX_LEDGER_LINES:
+                raise CheckpointError(
+                    f"trial ledger exceeds {_MAX_LEDGER_LINES} physical line limit"
+                )
+            complete_line = encoded_line.endswith(b"\n")
+            line = encoded_line[:-1] if complete_line else encoded_line
+            if line.endswith(b"\r"):
+                line = line[:-1]
+            if len(line) > _MAX_LEDGER_LINE_BYTES:
+                raise CheckpointError(
+                    f"invalid trial ledger line {index + 1}: exceeds "
+                    f"{_MAX_LEDGER_LINE_BYTES} byte line limit"
+                )
             if not line.strip():
                 continue
+            if len(trials) >= _MAX_LEDGER_RECORDS:
+                raise CheckpointError(f"trial ledger exceeds {_MAX_LEDGER_RECORDS} record limit")
             try:
-                raw = json.loads(line)
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                is_truncated_tail = index == len(lines) - 1 and not payload.endswith(b"\n")
-                if is_truncated_tail:
+                raw = loads_strict_json(
+                    line,
+                    limits=_LEDGER_JSON_LIMITS,
+                    context=f"trial ledger line {index + 1}",
+                )
+                total_nodes += json_node_count(
+                    raw,
+                    max_depth=_LEDGER_JSON_LIMITS.max_depth,
+                    max_nodes=_MAX_LEDGER_TOTAL_NODES - total_nodes,
+                    context="trial ledger",
+                )
+            except StrictJSONError as error:
+                is_truncated_tail = stream.tell() == len(payload) and not complete_line
+                if is_truncated_tail and error.syntax_error:
                     break
                 raise CheckpointError(f"invalid trial ledger line {index + 1}: {error}") from error
             trials.append(trial_from_dict(raw))
@@ -167,8 +228,17 @@ def write_metadata(path: str | Path, data: Mapping[str, Any]) -> Path:
 def read_metadata(path: str | Path) -> dict[str, Any]:
     source = Path(path)
     try:
-        data = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        payload = read_limited_bytes(
+            source,
+            max_bytes=_MAX_METADATA_BYTES,
+            context="run metadata",
+        )
+        data = loads_strict_json(
+            payload,
+            limits=_METADATA_JSON_LIMITS,
+            context="run metadata",
+        )
+    except (OSError, StrictJSONError) as error:
         raise CheckpointError(f"cannot read run metadata {source}: {error}") from error
     if not isinstance(data, dict):
         raise CheckpointError("run metadata must be an object")

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 - 2026-08-31
+
+- Add strict TopologyLantern analog benchmark ingestion and analytic evaluation.
+- Add a same-budget deterministic uniform-random-search comparison.
+- Add bounded strict JSON ingestion, scaling contracts, and synchronized runtime version metadata.
+
 ## 0.1.0 - 2026-08-31
 
 - Added strict mixed-variable problem definitions.
