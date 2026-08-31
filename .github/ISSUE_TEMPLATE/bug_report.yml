@@ -1,0 +1,41 @@
+name: Reproducibility or behavior defect
+description: Report a wrong result, crash, or nondeterministic run.
+title: "[Defect]: "
+labels: [bug]
+body:
+  - type: input
+    id: release
+    attributes:
+      label: BiasWeave release
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Python, OS, worker count, seed, and evaluator kind.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Synthetic problem and command
+      description: Remove private process and simulator data.
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: Observed result and expected invariant
+    validations:
+      required: true
+  - type: checkboxes
+    id: reproducible
+    attributes:
+      label: Checks
+      options:
+        - label: I can reproduce this with the supplied seed.
+          required: true
+        - label: Attached data is safe to publish.
+          required: true

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="300" viewBox="0 0 1120 300" role="img" aria-labelledby="title description">
+  <title id="title">BiasWeave real command-line demonstration</title>
+  <desc id="description">A real 80-evaluation run finishes with three feasible Pareto points and no failed evaluations.</desc>
+  <rect width="1120" height="300" rx="14" fill="#0d1117"/>
+  <rect width="1120" height="42" rx="14" fill="#161b22"/>
+  <circle cx="24" cy="21" r="6" fill="#ff7b72"/>
+  <circle cx="45" cy="21" r="6" fill="#d29922"/>
+  <circle cx="66" cy="21" r="6" fill="#3fb950"/>
+  <text x="90" y="27" fill="#8b949e" font-family="Consolas,monospace" font-size="14">BiasWeave — actual CLI run</text>
+  <g fill="#c9d1d9" font-family="Consolas,monospace" font-size="15">
+    <text x="24" y="76"><tspan fill="#7ee787">PS&gt;</tspan> python -m biasweave run --problem examples\two_stage_ota\problem.toml `</text>
+    <text x="24" y="102">    --evaluator python:biasweave.demo:evaluate --budget 80 --workers 4 `</text>
+    <text x="24" y="128">    --batch-size 8 --out artifacts\readme-demo</text>
+    <text x="24" y="166" fill="#a5d6ff">budget: 80 evaluations, 3 feasible Pareto points, 0 failed</text>
+    <text x="24" y="192">Results: artifacts\readme-demo</text>
+    <text x="24" y="232"><tspan fill="#7ee787">PS&gt;</tspan> python -m biasweave front --problem examples\two_stage_ota\problem.toml `</text>
+    <text x="24" y="258">    --ledger artifacts\readme-demo\trials.jsonl</text>
+    <text x="24" y="282" fill="#a5d6ff">trial  objectives  variables</text>
+  </g>
+</svg>

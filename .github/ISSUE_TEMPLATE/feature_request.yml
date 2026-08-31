@@ -1,0 +1,25 @@
+name: Optimization capability proposal
+description: Suggest a bounded new variable, constraint, evaluator, or search behavior.
+title: "[Proposal]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Sizing use case
+      description: Explain the decision that cannot be represented today.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Suggested public contract
+      description: Show TOML or Python API behavior and failure handling.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: How should it be verified?
+    validations:
+      required: true

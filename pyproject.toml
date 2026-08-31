@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biasweave"
+version = "0.1.0"
+description = "Reproducible multi-objective device-sizing search"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Weiping Yan" }]
+keywords = ["analog", "optimization", "pareto", "sizing", "eda"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "bandit>=1.8",
+  "build>=1.2",
+  "mypy>=1.17",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.12",
+]
+
+[project.scripts]
+biasweave = "biasweave.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/appleweiping/BiasWeave#readme"
+Issues = "https://github.com/appleweiping/BiasWeave/issues"
+Source = "https://github.com/appleweiping/BiasWeave"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+biasweave = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["biasweave"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "SIM", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+
+[tool.bandit]
+targets = ["src"]

@@ -1,0 +1,95 @@
+schema_version = 1
+
+[variables.input_width_m]
+kind = "real"
+low = 2e-6
+high = 80e-6
+scale = "log"
+default = 12e-6
+
+[variables.input_length_m]
+kind = "real"
+low = 0.18e-6
+high = 2e-6
+scale = "log"
+default = 0.6e-6
+
+[variables.load_width_m]
+kind = "real"
+low = 2e-6
+high = 100e-6
+scale = "log"
+default = 20e-6
+
+[variables.load_length_m]
+kind = "real"
+low = 0.18e-6
+high = 3e-6
+scale = "log"
+default = 0.8e-6
+
+[variables.bias_current_a]
+kind = "real"
+low = 5e-6
+high = 300e-6
+scale = "log"
+default = 40e-6
+
+[variables.compensation_cap_f]
+kind = "real"
+low = 0.2e-12
+high = 8e-12
+scale = "log"
+default = 1.5e-12
+
+[variables.fingers]
+kind = "integer"
+low = 1
+high = 16
+default = 4
+
+[variables.device_flavor]
+kind = "choice"
+values = ["standard", "low_leakage"]
+default = "standard"
+
+[variables.mirror_width_m]
+kind = "linked"
+source = "input_width_m"
+factor = 0.5
+
+[[objectives]]
+metric = "power_w"
+goal = "min"
+scale = 1e-3
+epsilon = 0.02
+
+[[objectives]]
+metric = "area_m2"
+goal = "min"
+scale = 1e-9
+epsilon = 0.02
+
+[[constraints]]
+metric = "gain_db"
+relation = "ge"
+limit = 62.0
+scale = 10.0
+
+[[constraints]]
+metric = "ugbw_hz"
+relation = "ge"
+limit = 8e6
+scale = 8e6
+
+[[constraints]]
+metric = "phase_margin_deg"
+relation = "ge"
+limit = 55.0
+scale = 20.0
+
+[[constraints]]
+metric = "slew_v_per_s"
+relation = "ge"
+limit = 8e6
+scale = 8e6
