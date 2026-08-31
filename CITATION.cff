@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If BiasWeave supports your work, please cite this software."
+type: software
+title: "BiasWeave"
+abstract: "Deterministic mixed-variable Pareto optimization for analog circuit sizing."
+authors:
+  - family-names: "Yan"
+    given-names: "Weiping"
+repository-code: "https://github.com/appleweiping/BiasWeave"
+url: "https://github.com/appleweiping/BiasWeave"
+license: MIT
+version: 0.2.0
+date-released: 2026-08-31
+keywords:
+  - analog optimization
+  - Pareto search
+  - circuit sizing

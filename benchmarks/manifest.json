@@ -1,0 +1,28 @@
+{
+  "schema": "org.topology-lantern.analog-sizing-benchmark",
+  "version": 1,
+  "model": "deterministic-analytic-proxy-v1",
+  "disclaimer": "Algorithm benchmark only; metrics are not simulated electrical results.",
+  "provenance": {
+    "data_source": "Caller-provided DesignSpec bound by source.spec_sha256",
+    "license": "Generated contract: MIT; caller retains responsibility for DesignSpec source rights.",
+    "generation_command": "topology-lantern benchmark <SPEC> --limit 4 --pretty"
+  },
+  "source": {"spec_sha256": "de7b6207e6677c688b6aa0055c65b5d2b779c743c20392a1892824cec3c13512", "candidate_count": 4, "supply_voltage": 1.8},
+  "candidates": [
+    {"candidate_id":"TL-2a033a1ce04c","signature":"baddad17253331a72842c868435da0ad355b2b01730d1f2874bfd45058bff313","device_count":5,"transistor_count":4,"passive_count":0,"stage_count":1,"headroom_units":2,"symmetry_penalty":0},
+    {"candidate_id":"TL-b4f99d5eafc1","signature":"7b0ac7e0a8ecba31c494384729a58c2704243672b99f9480e1c87dc0acc478f9","device_count":5,"transistor_count":2,"passive_count":2,"stage_count":1,"headroom_units":2,"symmetry_penalty":0},
+    {"candidate_id":"TL-9fe18125a784","signature":"cdc53142e80beb029caa548b527f1bc5dcb04671558a911f8d580c96237c133b","device_count":7,"transistor_count":5,"passive_count":0,"stage_count":2,"headroom_units":3,"symmetry_penalty":0},
+    {"candidate_id":"TL-1899f6330a4b","signature":"69b9a2a0a601e6aef0f8abe45736710e39008ded6966c5c3e779f705e0dfc241","device_count":7,"transistor_count":3,"passive_count":2,"stage_count":2,"headroom_units":3,"symmetry_penalty":0}
+  ],
+  "sizing": {
+    "width_um":{"low":0.5,"high":40.0,"scale":"log"},
+    "length_um":{"low":0.18,"high":2.0,"scale":"log"},
+    "bias_ua":{"low":5.0,"high":500.0,"scale":"log"},
+    "compensation_pf":{"low":0.1,"high":10.0,"scale":"log"}
+  },
+  "objectives":["power_mw","area_um2","bandwidth_mhz"],
+  "constraints":{"gain_db_min":20.0,"phase_margin_deg_min":45.0},
+  "expected_metrics":["gain_db","phase_margin_deg","power_mw","area_um2","bandwidth_mhz"],
+  "contract_sha256":"581557ff5f78605f239263b2380fcd7bf4acdd3b0f5e615a29ddac90de564779"
+}

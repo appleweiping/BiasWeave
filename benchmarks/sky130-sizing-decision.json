@@ -1,0 +1,32 @@
+{
+  "decision_sha256": "b2c8682f543233727c395d9ce5b260a3201c9ebbaf71b97085add08eaf6393d8",
+  "disclaimer": "Analytic proxy selection only; downstream SPICE simulation is required.",
+  "proxy_metrics": {
+    "area_um2": 14.683281572999748,
+    "bandwidth_mhz": 868.719138966202,
+    "gain_db": 24.653515379657684,
+    "phase_margin_deg": 54.22222222222222,
+    "power_mw": 0.11160000000000003
+  },
+  "schema": "org.biasweave.sizing-decision",
+  "selection": {
+    "algorithm": "biasweave",
+    "budget": 64,
+    "point_key": "5a307408195ba83bca3db375f4050c27eee1b50bff1ee00313f52b77dacce8ee",
+    "policy": "normalized-l1-to-observed-ideal-v1",
+    "seed": 17
+  },
+  "source": {
+    "benchmark_sha256": "7f128312cad0b25b73a0c73e19ebd3fed8841428a237a8145f4d9699d3989214",
+    "comparison_sha256": "0b265d1236aa3d273dc68e772f14c9002eaa2cf99a8feb3dfc11d747a059d267",
+    "topology_id": "TL-00052f7b8c5e",
+    "topology_signature": "086ce3f4158fa05ea8fddf2e7552af1d9774f95faffbe4dee11fae262d8857c8"
+  },
+  "variables": {
+    "bias_ua": 50.000000000000014,
+    "compensation_pf": 1.0,
+    "length_um": 0.6,
+    "width_um": 4.4721359549995805
+  },
+  "version": 1
+}

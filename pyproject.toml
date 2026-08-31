@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=75", "wheel"]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "biasweave"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reproducible multi-objective device-sizing search"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,15 +27,19 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
   "bandit>=1.8",
-  "build>=1.2",
+  "build==1.6.0",
+  "twine==7.0.0",
+  "jsonschema>=4.23",
   "mypy>=1.17",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.12",
+  "setuptools==84.0.0",
+  "wheel==0.48.0",
 ]
 
 [project.scripts]
-biasweave = "biasweave.cli:main"
+biasweave = "biasweave.cli:entrypoint"
 
 [project.urls]
 Documentation = "https://github.com/appleweiping/BiasWeave#readme"

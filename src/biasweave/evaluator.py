@@ -10,8 +10,16 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from biasweave._strict_json import JSONLimits, StrictJSONError, loads_strict_json
 from biasweave.errors import EvaluationError
 from biasweave.model import Problem, Scalar
+
+_EVALUATOR_JSON_LIMITS = JSONLimits(
+    max_bytes=1_048_576,
+    max_depth=16,
+    max_nodes=10_000,
+    max_number_characters=128,
+)
 
 
 class Evaluator(Protocol):
@@ -93,8 +101,12 @@ class CommandEvaluator:
                 f"evaluator command exited with {completed.returncode}: {detail or 'no stderr'}"
             )
         try:
-            result = json.loads(completed.stdout)
-        except json.JSONDecodeError as error:
+            result = loads_strict_json(
+                completed.stdout,
+                limits=_EVALUATOR_JSON_LIMITS,
+                context="evaluator command JSON",
+            )
+        except StrictJSONError as error:
             raise EvaluationError(f"evaluator command returned invalid JSON: {error}") from error
         if not isinstance(result, Mapping):
             raise EvaluationError("evaluator command JSON must be an object")

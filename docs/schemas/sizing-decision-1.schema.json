@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/appleweiping/BiasWeave/blob/main/docs/schemas/sizing-decision-1.schema.json",
+  "title": "BiasWeave sizing decision v1",
+  "type": "object",
+  "required": [
+    "schema", "version", "source", "selection", "variables", "proxy_metrics",
+    "disclaimer", "decision_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "org.biasweave.sizing-decision"},
+    "version": {"const": 1},
+    "source": {
+      "type": "object",
+      "required": [
+        "benchmark_sha256", "comparison_sha256", "topology_id", "topology_signature"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "benchmark_sha256": {"$ref": "#/$defs/sha256"},
+        "comparison_sha256": {"$ref": "#/$defs/sha256"},
+        "topology_id": {"type": "string", "pattern": "^TL-[0-9a-f]{12}$"},
+        "topology_signature": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "selection": {
+      "type": "object",
+      "required": ["algorithm", "budget", "seed", "policy", "point_key"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {"enum": ["biasweave", "uniform_random_search"]},
+        "budget": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer"},
+        "policy": {"const": "normalized-l1-to-observed-ideal-v1"},
+        "point_key": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "variables": {
+      "type": "object",
+      "required": ["bias_ua", "compensation_pf", "length_um", "width_um"],
+      "additionalProperties": false,
+      "properties": {
+        "bias_ua": {"type": "number", "exclusiveMinimum": 0},
+        "compensation_pf": {"type": "number", "exclusiveMinimum": 0},
+        "length_um": {"type": "number", "exclusiveMinimum": 0},
+        "width_um": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "proxy_metrics": {
+      "type": "object",
+      "required": [
+        "gain_db", "phase_margin_deg", "power_mw", "area_um2", "bandwidth_mhz"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "gain_db": {"type": "number"},
+        "phase_margin_deg": {"type": "number"},
+        "power_mw": {"type": "number"},
+        "area_um2": {"type": "number"},
+        "bandwidth_mhz": {"type": "number"}
+      }
+    },
+    "disclaimer": {"type": "string", "minLength": 1},
+    "decision_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

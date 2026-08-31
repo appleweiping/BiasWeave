@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from biasweave._strict_json import StrictJSONError, read_limited_bytes
 from biasweave.errors import ProblemError
 from biasweave.model import (
     Constraint,
@@ -20,6 +21,10 @@ from biasweave.model import (
     VariableKind,
     VariableScale,
 )
+
+_MAX_PROBLEM_BYTES = 1_048_576
+_MAX_PROBLEM_DEPTH = 64
+_MAX_PROBLEM_NODES = 10_000
 
 
 def _table(value: Any, context: str) -> Mapping[str, Any]:
@@ -210,7 +215,12 @@ def parse_problem(
 ) -> Problem:
     """Validate parsed TOML and return an immutable problem."""
     _unknown(data, {"schema_version", "variables", "objectives", "constraints"}, "problem")
-    if data.get("schema_version") != 1:
+    schema_version = data.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != 1
+    ):
         raise ProblemError("problem.schema_version must be 1")
     raw_variables = _table(data.get("variables"), "problem.variables")
     if not raw_variables:
@@ -237,16 +247,37 @@ def parse_problem(
     return Problem(variables, objectives, constraints, source_hash, source_path)
 
 
+def _check_problem_complexity(value: object) -> None:
+    pending: list[tuple[object, int]] = [(value, 0)]
+    nodes = 0
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if depth > _MAX_PROBLEM_DEPTH or nodes > _MAX_PROBLEM_NODES:
+            raise ProblemError("TOML problem exceeds complexity limits")
+        if isinstance(item, Mapping):
+            pending.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            pending.extend((child, depth + 1) for child in item)
+
+
 def load_problem(path: str | Path) -> Problem:
     source = Path(path)
     try:
-        payload = source.read_bytes()
+        payload = read_limited_bytes(
+            source,
+            max_bytes=_MAX_PROBLEM_BYTES,
+            context="TOML problem",
+        )
+    except StrictJSONError as error:
+        raise ProblemError(str(error)) from error
     except OSError as error:
         raise ProblemError(f"cannot read problem {source}: {error}") from error
     try:
         data = tomllib.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+    except (UnicodeDecodeError, ValueError, RecursionError, OverflowError) as error:
         raise ProblemError(f"invalid TOML problem {source}: {error}") from error
+    _check_problem_complexity(data)
     return parse_problem(
         data,
         source_hash=hashlib.sha256(payload).hexdigest(),

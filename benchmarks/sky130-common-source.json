@@ -1,0 +1,44 @@
+{
+  "schema": "org.topology-lantern.analog-sizing-benchmark",
+  "version": 1,
+  "model": "deterministic-analytic-proxy-v1",
+  "disclaimer": "Algorithm benchmark only; metrics are not simulated electrical results.",
+  "provenance": {
+    "data_source": "Caller-provided DesignSpec bound by source.spec_sha256",
+    "license": "Generated contract: MIT; caller retains responsibility for DesignSpec source rights.",
+    "generation_command": "topology-lantern benchmark <SPEC> --limit 4 --pretty"
+  },
+  "source": {
+    "spec_sha256": "3a361840cc2994c5c5c5acb877233ec663704b672a59d7b49c50e243e9a43e9b",
+    "candidate_count": 1,
+    "supply_voltage": 1.8
+  },
+  "candidates": [
+    {
+      "candidate_id": "TL-00052f7b8c5e",
+      "signature": "086ce3f4158fa05ea8fddf2e7552af1d9774f95faffbe4dee11fae262d8857c8",
+      "device_count": 2,
+      "transistor_count": 1,
+      "passive_count": 1,
+      "stage_count": 1,
+      "headroom_units": 1,
+      "symmetry_penalty": 1
+    }
+  ],
+  "sizing": {
+    "width_um": {"low": 0.5, "high": 40.0, "scale": "log"},
+    "length_um": {"low": 0.18, "high": 2.0, "scale": "log"},
+    "bias_ua": {"low": 5.0, "high": 500.0, "scale": "log"},
+    "compensation_pf": {"low": 0.1, "high": 10.0, "scale": "log"}
+  },
+  "objectives": ["power_mw", "area_um2", "bandwidth_mhz"],
+  "constraints": {"gain_db_min": 20.0, "phase_margin_deg_min": 45.0},
+  "expected_metrics": [
+    "gain_db",
+    "phase_margin_deg",
+    "power_mw",
+    "area_um2",
+    "bandwidth_mhz"
+  ],
+  "contract_sha256": "7f128312cad0b25b73a0c73e19ebd3fed8841428a237a8145f4d9699d3989214"
+}

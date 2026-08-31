@@ -51,7 +51,7 @@ scale = 1.0
     assert problem.variables[0].scale is VariableScale.LOG
 
 
-@pytest.mark.parametrize("schema", [None, 0, 2, "1"])
+@pytest.mark.parametrize("schema", [None, False, True, 0, 1.0, 2, "1"])
 def test_rejects_unsupported_schema(schema):
     data = problem_data()
     data["schema_version"] = schema
@@ -200,3 +200,20 @@ def test_load_problem_reports_file_and_toml_errors(tmp_path):
     path.write_text("[[", encoding="utf-8")
     with pytest.raises(ProblemError, match="invalid TOML"):
         load_problem(path)
+
+
+def test_load_problem_rejects_resource_exhaustion_inputs(tmp_path):
+    oversized = tmp_path / "oversized.toml"
+    oversized.write_bytes(b"#" + b" " * 1_048_576)
+    with pytest.raises(ProblemError, match="byte input limit"):
+        load_problem(oversized)
+
+    deep = tmp_path / "deep.toml"
+    deep.write_text("value = " + "[" * 65 + "0" + "]" * 65, encoding="utf-8")
+    with pytest.raises(ProblemError, match=r"complexity|invalid TOML"):
+        load_problem(deep)
+
+    many = tmp_path / "many.toml"
+    many.write_text("value = [" + ",".join("0" for _ in range(10_001)) + "]", encoding="utf-8")
+    with pytest.raises(ProblemError, match="complexity"):
+        load_problem(many)
