@@ -9,8 +9,8 @@ authors:
 repository-code: "https://github.com/appleweiping/BiasWeave"
 url: "https://github.com/appleweiping/BiasWeave"
 license: MIT
-version: 0.2.0
-date-released: 2026-08-31
+version: 0.3.0
+date-released: 2026-09-07
 keywords:
   - analog optimization
   - Pareto search

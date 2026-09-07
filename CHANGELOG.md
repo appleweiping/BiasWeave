@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-07
+
 ### Added
 
 - `biasweave quality`: hypervolume, spacing, and extent for the feasible front a ledger records,
