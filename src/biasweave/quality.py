@@ -317,9 +317,7 @@ def _hypervolume_recursive(vectors: list[Vector], reference: Vector) -> float:
             tuple(max(a, b) for a, b in zip(vector, other, strict=True))
             for other in vectors[index + 1 :]
         ]
-        total += _box(vector, reference) - _hypervolume_recursive(
-            _nondominated(clipped), reference
-        )
+        total += _box(vector, reference) - _hypervolume_recursive(_nondominated(clipped), reference)
     return total
 
 
@@ -603,8 +601,7 @@ def attainment_curve(
     feasible = _feasible_vectors(ordered)
     if not feasible and reference_point is None and pool is None:
         raise ConfigurationError(
-            "a run with no feasible trial has no reference point to derive; "
-            "supply reference_point"
+            "a run with no feasible trial has no reference point to derive; supply reference_point"
         )
     reference, derived = _resolve_reference(feasible, reference_point, pool, margin)
     if len(reference) != len(problem.objectives):
@@ -628,9 +625,7 @@ def attainment_curve(
                 front_size=len(front),
             )
         )
-    return Attainment(
-        reference_point=reference, reference_derived=derived, points=tuple(points)
-    )
+    return Attainment(reference_point=reference, reference_derived=derived, points=tuple(points))
 
 
 def compare_fronts(
@@ -722,8 +717,7 @@ def measure_run(
     pool = _feasible_vectors(trials) + _feasible_vectors(compare or ())
     if not pool and reference_point is None:
         raise ConfigurationError(
-            "no run has a feasible trial to derive a reference point from; "
-            "supply reference_point"
+            "no run has a feasible trial to derive a reference point from; supply reference_point"
         )
     reference, derived = _resolve_reference(pool, reference_point, None, margin)
     frontier = pareto_front(list(trials))
@@ -740,9 +734,7 @@ def measure_run(
         ),
         comparison=(
             _comparison_derivation(
-                compare_fronts(
-                    frontier, pareto_front(list(compare)), reference_point=reference
-                ),
+                compare_fronts(frontier, pareto_front(list(compare)), reference_point=reference),
                 derived,
             )
             if compare is not None

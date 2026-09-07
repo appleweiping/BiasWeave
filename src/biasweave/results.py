@@ -172,13 +172,11 @@ def comparison_lines(comparison: FrontComparison, objectives: Sequence[Objective
 
     lines = [reference_line(comparison.left, objectives), "", "Left front:"]
     lines += [
-        f"  {line}"
-        for line in quality_lines(comparison.left, objectives, with_reference=False)
+        f"  {line}" for line in quality_lines(comparison.left, objectives, with_reference=False)
     ]
     lines += ["", "Right front:"]
     lines += [
-        f"  {line}"
-        for line in quality_lines(comparison.right, objectives, with_reference=False)
+        f"  {line}" for line in quality_lines(comparison.right, objectives, with_reference=False)
     ]
     lines += [
         "",

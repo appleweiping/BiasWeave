@@ -93,9 +93,7 @@ def test_a_pooled_reference_is_still_reported_as_derived() -> None:
 
 
 def test_an_explicit_reference_beats_a_pool() -> None:
-    quality = front_quality(
-        trials((0.1, 0.1)), reference_point=(1.0, 1.0), pool=[(9.0, 9.0)]
-    )
+    quality = front_quality(trials((0.1, 0.1)), reference_point=(1.0, 1.0), pool=[(9.0, 9.0)])
     assert quality.reference_point == (1.0, 1.0)
     assert not quality.reference_derived
 
@@ -107,9 +105,7 @@ def test_a_pool_lets_an_empty_front_be_measured() -> None:
 
 
 def test_a_compared_run_shares_the_reference_with_its_own_curve() -> None:
-    measured = measure_run(
-        make_problem(), improving_run(), compare=trials((0.2, 0.2)), steps=4
-    )
+    measured = measure_run(make_problem(), improving_run(), compare=trials((0.2, 0.2)), steps=4)
     assert measured.comparison is not None
     assert measured.attainment is not None
     assert measured.comparison.reference_point == measured.reference_point
@@ -179,9 +175,7 @@ def test_a_fraction_outside_the_unit_interval_is_refused(fraction: float) -> Non
 
 
 def test_a_run_that_found_nothing_reached_no_share_of_nothing() -> None:
-    curve = attainment_curve(
-        make_problem(), trials((5.0, 5.0)), reference_point=(1.0, 1.0)
-    )
+    curve = attainment_curve(make_problem(), trials((5.0, 5.0)), reference_point=(1.0, 1.0))
     assert curve.final_hypervolume == 0.0
     assert curve.evaluations_for() == 0
 
@@ -204,9 +198,7 @@ def test_the_rendering_names_each_objective_beside_its_number() -> None:
 
 
 def test_the_rendering_says_when_a_reference_was_supplied() -> None:
-    lines = quality_lines(
-        front_quality(trials((0.1, 0.1)), reference_point=(1.0, 1.0)), OBJECTIVES
-    )
+    lines = quality_lines(front_quality(trials((0.1, 0.1)), reference_point=(1.0, 1.0)), OBJECTIVES)
     assert any("supplied" in line for line in lines)
 
 
@@ -228,9 +220,7 @@ def test_a_comparison_prints_the_shared_box_once() -> None:
 
 def test_a_comparison_says_when_neither_front_reaches_the_other() -> None:
     text = "\n".join(
-        comparison_lines(
-            compare_fronts(trials((0.1, 0.9)), trials((0.9, 0.1))), OBJECTIVES
-        )
+        comparison_lines(compare_fronts(trials((0.1, 0.9)), trials((0.9, 0.1))), OBJECTIVES)
     )
     assert "Neither front reaches" in text
 
@@ -257,18 +247,13 @@ def test_the_curve_rendering_reports_a_run_that_stopped_improving() -> None:
 
 
 def test_the_curve_rendering_reports_a_run_still_improving() -> None:
-    run = [
-        trial
-        for trial in improving_run()[:4]
-    ]
+    run = improving_run()[:4]
     curve = attainment_curve(make_problem(), run, steps=4)
     assert "still improving" in "\n".join(attainment_lines(curve, len(run)))
 
 
 def test_the_curve_rendering_survives_a_run_that_found_nothing() -> None:
-    curve = attainment_curve(
-        make_problem(), trials((5.0, 5.0)), reference_point=(1.0, 1.0)
-    )
+    curve = attainment_curve(make_problem(), trials((5.0, 5.0)), reference_point=(1.0, 1.0))
     text = "\n".join(attainment_lines(curve, 1))
     assert "share of final" in text
     assert "-" in text
@@ -462,9 +447,7 @@ def test_the_command_accepts_an_explicit_reference_point(tmp_path: Path, capsys)
     assert "supplied" in capsys.readouterr().out
 
 
-def test_a_reference_point_of_the_wrong_width_is_refused(
-    tmp_path: Path, capsys
-) -> None:
+def test_a_reference_point_of_the_wrong_width_is_refused(tmp_path: Path, capsys) -> None:
     directory = run_search(tmp_path, "width", budget=16, seed=7)
     capsys.readouterr()
     assert (

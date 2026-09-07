@@ -58,9 +58,7 @@ def random_points(rng: random.Random, count: int, dimension: int) -> list[tuple[
     return [tuple(rng.uniform(0.0, 1.0) for _ in range(dimension)) for _ in range(count)]
 
 
-def inclusion_exclusion(
-    points: list[tuple[float, ...]], reference: tuple[float, ...]
-) -> float:
+def inclusion_exclusion(points: list[tuple[float, ...]], reference: tuple[float, ...]) -> float:
     """The textbook definition: a signed sum over every subset of the boxes."""
 
     total = 0.0
