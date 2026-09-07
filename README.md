@@ -38,7 +38,8 @@ variable and metric names are opaque identifiers, and everything circuit-specifi
 Parallelism is a thread pool on one machine whose results are still committed in trial-ID order; there is no
 distributed scheduler, and `command:` evaluators are started with `shell=False`. There is no convergence detector
 either. A run stops on its budget, an optional wall-time limit, an optional stagnation counter, or an exhausted finite
-search space, and the reported front is exactly what those evaluations found.
+search space, and the reported front is exactly what those evaluations found. `biasweave quality` answers the related
+question afterwards, describing what a finished run attained rather than deciding when a running one should stop.
 
 BiasWeave is an optimizer and experiment recorder. It is not a circuit simulator, compact model, PDK, sign-off tool, or
 guarantee of global optimality.
@@ -84,6 +85,9 @@ biasweave run \
 biasweave front \
   --problem examples/two_stage_ota/problem.toml \
   --ledger artifacts/two-stage-ota/trials.jsonl
+biasweave quality \
+  --problem examples/two_stage_ota/problem.toml \
+  --ledger artifacts/two-stage-ota/trials.jsonl --curve
 ```
 
 The example equations are synthetic and documented as such. They demonstrate the interface; they do not predict a
@@ -240,11 +244,118 @@ An output directory contains:
 
 - `trials.jsonl`: append-only, fsync'd record of every completed trial;
 - `run.json`: atomically replaced compatibility and proposal-state checkpoint;
-- `frontier.json`: deterministic machine-readable summary and complete feasible front;
-- `summary.md`: compact human-readable run summary.
+- `frontier.json`: deterministic machine-readable summary, complete feasible front, and the quality of
+  that front under a reference point derived from every feasible trial the run recorded;
+- `summary.md`: compact human-readable run summary, including the same front-quality block.
 
 A malformed complete ledger line is rejected. A truncated final line without its newline is ignored, which permits
 recovery after interruption during the final append. Trial IDs before that tail must be contiguous from zero.
+
+## Front quality
+
+A run reports the front it found. Whether that front was worth its budget, and
+whether another run found a better one, are separate questions:
+
+```console
+biasweave quality \
+  --problem examples/two_stage_ota/problem.toml \
+  --ledger artifacts/two-stage-ota/trials.jsonl \
+  --curve --steps 6
+```
+
+```
+Hypervolume: 4.43856
+Reference point (derived): power_w=0.748562, area_m2=6.24136
+Front points: 3 (3 inside the reference box, 0 outside)
+Spacing: 0.00186498
+Extent: power_w=0.0131652, area_m2=0.00561111
+
+evaluations  front  hypervolume  share of final
+         40      1      3.92589          88.45%
+         80      4      4.43268          99.87%
+        120      3      4.43514          99.92%
+        160      3      4.43823          99.99%
+        200      3      4.43838         100.00%
+        240      3      4.43856         100.00%
+The front was still improving at the final evaluation (240).
+It was within 1% of its final hypervolume by evaluation 80, which is 33% of the run.
+```
+
+Both of the last two lines are true, and the second is the useful one. BiasWeave
+has no convergence detector and reports neither number as a stopping rule; the
+run above spent two thirds of its budget on a tenth of a percent, which is a
+fact about that problem, seed and evaluator rather than a recommendation.
+
+Hypervolume is the volume of objective space a front dominates, bounded by a
+reference point. It is measured on the normalized objective vectors, which the
+assessment step has already divided by each objective's `scale` and flipped to
+minimization, so the number is unit-free and comparable across the objectives
+of one problem. A volume in raw metric units would not be: the product of a
+power in watts and an area in square metres is not a quantity. It is also the
+one widely used indicator that cannot rise unless the front genuinely improved.
+
+### The reference point decides the number
+
+Everything in one report is bounded by one box, derived from every feasible
+trial the run recorded. That matters more than it sounds. A front derives a
+tight box on its own, while an attainment curve needs one wide enough to hold
+the worse fronts that came before it, so measuring them separately produces two
+numbers that differ by orders of magnitude and are both called the hypervolume
+of the run. `--reference-point` states the box explicitly, in normalized units,
+when comparability across sessions matters more than fitting the data.
+
+Points lying outside the box contribute no volume and are counted rather than
+dropped, so a hypervolume of zero with every point ignored reads as a
+misplaced reference rather than as a run that found nothing.
+
+### Comparing two runs
+
+```console
+biasweave quality \
+  --problem examples/two_stage_ota/problem.toml \
+  --ledger artifacts/seed-17/trials.jsonl \
+  --compare artifacts/seed-5/trials.jsonl
+```
+
+```
+Reference point (derived): power_w=0.753391, area_m2=6.27141
+
+Left front:
+  Hypervolume: 4.49003
+  Front points: 3 (3 inside the reference box, 0 outside)
+
+Right front:
+  Hypervolume: 4.23928
+  Front points: 6 (6 inside the reference box, 0 outside)
+
+Hypervolume difference (left - right): 0.250751
+Left covers 100.0% of the right front; right covers 0.0% of the left.
+Additive epsilon, left to right: -0.0228877; right to left: 0.146008.
+```
+
+The reference is derived once, from both runs together, because two
+hypervolumes taken against separately derived boxes describe their boxes as
+much as their fronts. A front that is dominated on every point can outscore the
+front that dominates it when each is measured against a box of its own.
+
+Two more indicators are reported beside the volume, because a single number
+cannot say that two fronts are incomparable. Coverage is the share of one front
+weakly dominated by the other, and the additive epsilon is the shift, in
+normalized units, that would make one front reach the other. Above, the left
+front covers all of the right and needs a negative shift, so it dominates
+outright. When both coverages are zero neither front reaches the other, and the
+hypervolume difference then reflects where each is concentrated rather than a
+dominance relation: volume rewards points near the knee over points at the
+extremes.
+
+None of this measures distance to the true Pareto front, which is unknown. A
+larger hypervolume means one run dominated more of the space under one
+reference point.
+
+Exact hypervolume is refused rather than estimated above a front size that
+depends on the objective count, since a sampled volume carries around half a
+percent of relative error and two runs worth comparing routinely differ by
+less. Two objectives use an `O(n log n)` sweep and are never capped.
 
 ## Python API
 
@@ -266,6 +377,20 @@ result = optimize(
 The returned result exposes all trials and the feasible exact Pareto front. Parallel evaluators may finish in any order,
 but BiasWeave commits their results in trial-ID order. Determinism assumes the evaluator itself is deterministic and
 safe under the requested worker count.
+
+`biasweave.quality` measures a finished run. `measure_run` is the entry point that keeps one reference point across
+everything it returns:
+
+```python
+from biasweave.quality import measure_run
+
+measured = measure_run(problem, result.trials, steps=10)
+print(measured.front.hypervolume, measured.attainment.last_improvement)
+```
+
+`hypervolume`, `coverage`, `epsilon_indicator`, `spacing`, and `derive_reference_point` operate on plain sequences of
+normalized objective vectors for callers who already have them. `front_quality`, `attainment_curve`, and
+`compare_fronts` take trials and accept a `pool` of vectors so several measurements can share one derived box.
 
 ## Development
 

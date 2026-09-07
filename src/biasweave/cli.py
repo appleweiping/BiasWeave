@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import tempfile
@@ -18,9 +19,10 @@ from biasweave.engine import optimize, validate_checkpoint_trials
 from biasweave.errors import BiasWeaveError, ConfigurationError
 from biasweave.evaluator import CommandEvaluator, load_python_evaluator
 from biasweave.ledger import TrialLedger, read_metadata
-from biasweave.model import RunConfig, Scalar
+from biasweave.model import Problem, RunConfig, Scalar, Trial
 from biasweave.problem import load_problem
-from biasweave.results import frontier_table
+from biasweave.quality import measure_run
+from biasweave.results import attainment_lines, comparison_lines, frontier_table, quality_lines
 
 _COMMAND_JSON_LIMITS = JSONLimits(
     max_bytes=65_536,
@@ -41,6 +43,18 @@ def _non_negative(value: str) -> int:
     parsed = int(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("must not be negative")
+    return parsed
+
+
+def _reference_point(value: str) -> tuple[float, ...]:
+    try:
+        parsed = tuple(float(item) for item in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "reference point must be comma-separated numbers"
+        ) from error
+    if not parsed or not all(math.isfinite(item) for item in parsed):
+        raise argparse.ArgumentTypeError("reference point must be finite and non-empty")
     return parsed
 
 
@@ -105,6 +119,33 @@ def build_parser() -> argparse.ArgumentParser:
     front = commands.add_parser("front", help="print the feasible Pareto front")
     front.add_argument("--problem", required=True, type=Path)
     front.add_argument("--ledger", required=True, type=Path)
+
+    quality = commands.add_parser(
+        "quality", help="measure the front a ledger records, or compare two"
+    )
+    quality.add_argument("--problem", required=True, type=Path)
+    quality.add_argument("--ledger", required=True, type=Path)
+    quality.add_argument(
+        "--compare",
+        type=Path,
+        help="a second ledger of the same problem, measured against one shared reference",
+    )
+    quality.add_argument(
+        "--reference-point",
+        type=_reference_point,
+        help="comma-separated bound per objective, in normalized units; "
+        "derived from the front when omitted",
+    )
+    quality.add_argument(
+        "--steps",
+        type=_positive,
+        default=20,
+        help="points on the attainment curve; 0 is not permitted, omit --curve to skip it",
+    )
+    quality.add_argument(
+        "--curve", action="store_true", help="report hypervolume against evaluations spent"
+    )
+    quality.add_argument("--output", type=Path, help="write JSON instead of text")
 
     benchmark = commands.add_parser("benchmark", help="run an analog contract comparison")
     benchmark.add_argument("--contract", required=True, type=Path)
@@ -177,6 +218,8 @@ def dispatch(arguments: argparse.Namespace) -> int:
         archive = Archive(problem, trials)
         print(frontier_table(archive.frontier))
         return 0
+    if arguments.command == "quality":
+        return _quality(arguments)
     if arguments.command == "benchmark":
         if (
             arguments.output
@@ -203,6 +246,63 @@ def dispatch(arguments: argparse.Namespace) -> int:
             print(rendered, end="")
         return 0
     raise ConfigurationError(f"unsupported command: {arguments.command}")
+
+
+def _ledger_trials(problem: Problem, path: Path) -> list[Trial]:
+    """Read a ledger and hold it to the problem it claims to belong to.
+
+    Two fronts are only comparable when they answer the same question, so both
+    ledgers of a comparison are validated against the one problem document
+    rather than merely being the same length.
+    """
+
+    trials = TrialLedger(path).read()
+    validate_checkpoint_trials(problem, trials)
+    return trials
+
+
+def _quality(arguments: argparse.Namespace) -> int:
+    problem = load_problem(arguments.problem)
+    reference = arguments.reference_point
+    if reference is not None and len(reference) != len(problem.objectives):
+        raise ConfigurationError(
+            f"--reference-point has {len(reference)} components for "
+            f"{len(problem.objectives)} objectives"
+        )
+    trials = _ledger_trials(problem, arguments.ledger)
+    compared = _ledger_trials(problem, arguments.compare) if arguments.compare else None
+    # One call, so the front, the curve and the comparison are bounded by the
+    # same box and the numbers in one report can be read against each other.
+    measured = measure_run(
+        problem,
+        trials,
+        compare=compared,
+        steps=arguments.steps if arguments.curve else None,
+        reference_point=reference,
+    )
+
+    if arguments.output:
+        payload: dict[str, object] = {
+            "schema_version": 1,
+            "problem_sha256": problem.source_hash,
+            "ledger": str(arguments.ledger),
+            **measured.as_dict(),
+        }
+        if arguments.compare:
+            payload["compared_ledger"] = str(arguments.compare)
+        _write_outputs_atomically(
+            [(arguments.output, json.dumps(payload, indent=2, sort_keys=True) + "\n")]
+        )
+        return 0
+
+    if measured.comparison is not None:
+        lines = comparison_lines(measured.comparison, problem.objectives)
+    else:
+        lines = quality_lines(measured.front, problem.objectives)
+    if measured.attainment is not None:
+        lines = [*lines, *attainment_lines(measured.attainment, len(trials))]
+    print("\n".join(lines))
+    return 0
 
 
 def _write_outputs_atomically(outputs: list[tuple[Path, str]]) -> None:
