@@ -25,7 +25,8 @@ def test_actual_standalone_workflow_command_is_import_isolated(
     root = Path(__file__).resolve().parents[1]
     body = (root / ".github/workflows" / workflow).read_text(encoding="utf-8")
     relative = f"src/biasweave/{script}"
-    isolated = f"python -I {relative}" in body
+    workflow_site_isolated = f"python -I -S {relative}" in body
+    isolated = workflow_site_isolated or f"python -I {relative}" in body
     isolation = ["-I"] if isolated else []
     # The trusted-base DCO job and downstream release jobs do not install this
     # package. Disable site-packages so an editable dev install cannot hide an
@@ -35,3 +36,5 @@ def test_actual_standalone_workflow_command_is_import_isolated(
     assert result.returncode == expected, result.stderr
     assert "usage:" in result.stdout + result.stderr
     assert isolated, "standalone trusted helpers must not import sibling or user-site modules"
+    if workflow == "dco.yml":
+        assert workflow_site_isolated, "trusted DCO execution must also disable site-packages"

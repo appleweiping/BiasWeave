@@ -93,7 +93,7 @@ jobs:
         id: verify
         continue-on-error: true
         run: >-
-          python -I src/biasweave/dco.py "$RUNNER_TEMP/pull-commits.json"
+          python -I -S src/biasweave/dco.py "$RUNNER_TEMP/pull-commits.json"
           "${{ steps.metadata.outputs.count }}"
           "${{ github.event.pull_request.head.sha }}"
       - name: Publish result on the immutable pull-request head

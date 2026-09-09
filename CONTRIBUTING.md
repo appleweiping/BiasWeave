@@ -30,8 +30,8 @@ Origin trailer. Use `git commit -s`. The `pull_request_target` DCO workflow runs
 only the verifier from the trusted base revision, requires the author-matching
 sign-off inside a syntactically valid final trailer block, and never executes
 pull-request code. Its bounded JSON reader uses only the standard library;
-tests disable site-packages so a local editable install cannot mask a missing
-dependency in the installation-free trusted workflow. It marks the event head
+the workflow runs `python -I -S` to disable site-packages, and tests repeat that
+invocation so an editable install cannot mask a missing dependency. It marks the event head
 pending, handles PR base edits, and
 binds the REST commit list to the event and final base repository/ref/SHA, head,
 and declared count before publishing success.
