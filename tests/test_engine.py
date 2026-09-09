@@ -6,11 +6,14 @@ import time
 
 import pytest
 
+from biasweave._failure import evaluator_failure
 from biasweave.engine import optimize, problem_fingerprint, validate_run_config
 from biasweave.errors import CheckpointError, ConfigurationError
 from biasweave.ledger import TrialLedger, read_metadata, write_metadata
 from biasweave.model import RunConfig, TrialStatus
 from biasweave.problem import parse_problem
+from biasweave.proposal import ProposalGenerator
+from biasweave.strategy import optimize_strategy
 from tests.helpers import evaluator, failed_evaluator, make_problem, problem_data
 
 
@@ -19,6 +22,7 @@ from tests.helpers import evaluator, failed_evaluator, make_problem, problem_dat
     [
         (RunConfig(0), "budget"),
         (RunConfig(1, seed=True), "seed"),
+        (RunConfig(1, seed=10**128), "seed"),
         (RunConfig(1, workers=0), "workers"),
         (RunConfig(1, batch_size=0), "batch_size"),
         (RunConfig(1, max_stagnation=-1), "max_stagnation"),
@@ -33,7 +37,7 @@ def test_validate_run_config_rejects_invalid_values(config, message):
 
 def test_problem_fingerprint_uses_source_hash_or_stable_structure():
     problem = make_problem()
-    assert problem_fingerprint(problem) == "fixture-hash"
+    assert problem_fingerprint(problem) == "f" * 64
     first = parse_problem(problem_data())
     second = parse_problem(problem_data())
     assert len(problem_fingerprint(first)) == 64
@@ -131,7 +135,7 @@ def test_fresh_checkpoint_writes_all_artifacts_and_refuses_overwrite(tmp_path):
     assert json.loads((output / "frontier.json").read_text())["trial_count"] == 7
     assert (output / "summary.md").is_file()
     assert len(result.trials) == 7
-    with pytest.raises(CheckpointError, match="already contains a checkpoint"):
+    with pytest.raises(CheckpointError, match="refusing to overwrite"):
         optimize(
             make_problem(),
             evaluator,
@@ -191,7 +195,7 @@ def test_resume_rejects_incompatible_metadata(tmp_path, field, value, message):
     )
     metadata = read_metadata(output / "run.json")
     metadata[field] = value
-    write_metadata(output / "run.json", metadata)
+    write_metadata(output / "run.json", metadata, force=True)
     with pytest.raises(CheckpointError, match=message):
         optimize(
             make_problem(),
@@ -215,7 +219,7 @@ def test_resume_rejects_non_integer_metadata_schema(tmp_path, schema_version):
     )
     metadata = read_metadata(output / "run.json")
     metadata["schema_version"] = schema_version
-    write_metadata(output / "run.json", metadata)
+    write_metadata(output / "run.json", metadata, force=True)
     with pytest.raises(CheckpointError, match="metadata schema"):
         optimize(
             make_problem(),
@@ -238,7 +242,7 @@ def test_resume_rejects_unknown_metadata_fields(tmp_path):
     )
     metadata = read_metadata(output / "run.json")
     metadata["injected"] = True
-    write_metadata(output / "run.json", metadata)
+    write_metadata(output / "run.json", metadata, force=True)
     with pytest.raises(CheckpointError, match="metadata fields"):
         optimize(
             make_problem(),
@@ -270,7 +274,7 @@ def test_resume_rejects_missing_metadata_count_disagreement_and_smaller_budget(t
     )
     metadata = read_metadata(output / "run.json")
     metadata["completed_trials"] = 3
-    write_metadata(output / "run.json", metadata)
+    write_metadata(output / "run.json", metadata, force=True)
     with pytest.raises(CheckpointError, match="disagree"):
         optimize(
             make_problem(),
@@ -281,7 +285,7 @@ def test_resume_rejects_missing_metadata_count_disagreement_and_smaller_budget(t
             resume=True,
         )
     metadata["completed_trials"] = 4
-    write_metadata(output / "run.json", metadata)
+    write_metadata(output / "run.json", metadata, force=True)
     with pytest.raises(ConfigurationError, match="less than completed"):
         optimize(
             make_problem(),
@@ -331,6 +335,81 @@ def test_resume_rejects_tampered_point_and_generator_state(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("failed", "replacement"),
+    [(False, "forged success error"), (True, None), (True, "")],
+)
+def test_resume_rejects_noncanonical_trial_error_fields(tmp_path, failed, replacement):
+    output = tmp_path / ("failed" if failed else "success")
+    chosen_evaluator = failed_evaluator if failed else evaluator
+    optimize(
+        make_problem(),
+        chosen_evaluator,
+        evaluator_id="tests:canonical-trial",
+        config=RunConfig(1, batch_size=1),
+        output_directory=output,
+    )
+    ledger_path = output / "trials.jsonl"
+    record = json.loads(ledger_path.read_text(encoding="utf-8"))
+    record["error"] = replacement
+    ledger_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    with pytest.raises(CheckpointError, match="canonical|inconsistent"):
+        optimize(
+            make_problem(),
+            chosen_evaluator,
+            evaluator_id="tests:canonical-trial",
+            config=RunConfig(2, batch_size=1),
+            output_directory=output,
+            resume=True,
+        )
+
+
+def test_checkpoint_run_excludes_a_second_live_writer(tmp_path):
+    output = tmp_path / "single-writer"
+    entered = threading.Event()
+    release = threading.Event()
+    first_error: list[BaseException] = []
+
+    def blocking_evaluator(values):
+        entered.set()
+        assert release.wait(5)
+        return evaluator(values)
+
+    def run_first() -> None:
+        try:
+            optimize(
+                make_problem(),
+                blocking_evaluator,
+                evaluator_id="tests:single-writer",
+                config=RunConfig(1, batch_size=1),
+                output_directory=output,
+            )
+        except BaseException as error:  # Captured for an assertion in the parent thread.
+            first_error.append(error)
+
+    thread = threading.Thread(target=run_first, name="biasweave-first-writer")
+    thread.start()
+    assert entered.wait(5)
+    try:
+        with pytest.raises(CheckpointError, match="another writer"):
+            write_metadata(output / "run.json", {"concurrent": True}, force=True)
+        with pytest.raises(CheckpointError, match="another writer"):
+            optimize(
+                make_problem(),
+                evaluator,
+                evaluator_id="tests:single-writer",
+                config=RunConfig(2, batch_size=1),
+                output_directory=output,
+                resume=True,
+            )
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert not first_error
+    assert [trial.trial_id for trial in TrialLedger(output / "trials.jsonl").read()] == [0]
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [("coverage_index", True), ("proposal_index", -1), ("radius", float("nan"))],
 )
@@ -367,7 +446,7 @@ def test_resume_rejects_malformed_generator_fields(tmp_path, field, value):
     )
     metadata = read_metadata(state_output / "run.json")
     metadata["generator"] = {"coverage_index": 1}
-    write_metadata(state_output / "run.json", metadata)
+    write_metadata(state_output / "run.json", metadata, force=True)
     with pytest.raises(CheckpointError, match="proposal-generator state"):
         optimize(
             make_problem(),
@@ -410,7 +489,7 @@ def test_resume_recovers_durable_ledger_ahead_of_metadata(tmp_path):
         output_directory=output,
         resume=True,
     )
-    write_metadata(output / "run.json", old_metadata)
+    write_metadata(output / "run.json", old_metadata, force=True)
     recovered = optimize(
         make_problem(),
         evaluator,
@@ -447,7 +526,7 @@ def test_resume_completes_a_partially_written_batch_without_sequence_drift(tmp_p
     ledger = output / "trials.jsonl"
     lines = ledger.read_text(encoding="utf-8").splitlines()
     ledger.write_text("\n".join(lines[:4]) + "\n", encoding="utf-8")
-    write_metadata(output / "run.json", old_metadata)
+    write_metadata(output / "run.json", old_metadata, force=True)
     resumed = optimize(
         make_problem(),
         evaluator,
@@ -574,3 +653,131 @@ def test_finite_discrete_space_stops_when_exhausted():
     )
     assert result.stop_reason == "search_space_exhausted"
     assert len(result.trials) == 2
+
+
+def test_persisted_weave_accepts_the_signed_128_digit_integer_boundary(tmp_path) -> None:
+    low = -(10**127)
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": {"kind": "integer", "low": low, "high": low + 2}},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+    output = tmp_path / "signed-integer"
+    result = optimize(
+        problem,
+        lambda _point: {"a": 0.0, "b": 0.0},
+        evaluator_id="tests:signed-128-digit",
+        config=RunConfig(3),
+        output_directory=output,
+    )
+
+    assert result.stop_reason == "budget"
+    assert {trial.point.values["x"] for trial in TrialLedger(output / "trials.jsonl").read()} == {
+        low,
+        low + 1,
+        low + 2,
+    }
+
+
+def test_non_enumerable_duplicate_stream_reports_stall_not_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        ProposalGenerator,
+        "_strand",
+        lambda self, _archive, _trials: tuple(0.5 for _ in self.problem.free_variables),
+    )
+    result = optimize(
+        make_problem(),
+        evaluator,
+        evaluator_id="tests:stalled",
+        config=RunConfig(10, batch_size=1),
+    )
+    assert result.stop_reason == "proposal_stalled"
+    assert 0 < len(result.trials) < 10
+
+
+class _UnprintableEvaluatorError(Exception):
+    def __str__(self) -> str:
+        raise KeyboardInterrupt("str failed")
+
+    def __repr__(self) -> str:
+        raise SystemExit("repr failed")
+
+
+class _HostileExceptionMeta(type):
+    def __getattribute__(cls, name: str):
+        if name == "__name__":
+            raise KeyboardInterrupt("name failed")
+        return super().__getattribute__(name)
+
+
+class _UnnamedEvaluatorError(Exception, metaclass=_HostileExceptionMeta):
+    pass
+
+
+@pytest.mark.parametrize("catalog", [False, True])
+def test_evaluator_exception_formatting_is_shared_bounded_and_total(catalog: bool) -> None:
+    def hostile(_point):
+        raise _UnprintableEvaluatorError
+
+    if catalog:
+        result = optimize_strategy(
+            make_problem(),
+            hostile,
+            evaluator_id="tests:hostile",
+            config=RunConfig(1),
+            strategy="random",
+        )
+    else:
+        result = optimize(
+            make_problem(), hostile, evaluator_id="tests:hostile", config=RunConfig(1)
+        )
+    assert result.trials[0].error == "_UnprintableEvaluatorError: <unprintable exception>"
+    assert len(result.trials[0].error or "") <= 512
+
+
+def test_evaluator_exception_formatter_bounds_text_and_hostile_type_names() -> None:
+    class HugeError(Exception):
+        def __str__(self) -> str:
+            return "first\n\ud800" + "x" * 1_000_000
+
+    rendered = evaluator_failure(HugeError())
+    assert len(rendered) == 512
+    assert "\n" not in rendered
+    rendered.encode("utf-8")
+    assert evaluator_failure(_UnnamedEvaluatorError("detail")) == "Exception: detail"
+
+
+def test_weave_sparse_anchor_handles_extreme_finite_objective_cells() -> None:
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": {"kind": "real", "low": 0.0, "high": 1.0}},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0, "epsilon": 5e-324},
+                {"metric": "b", "goal": "min", "scale": 1.0, "epsilon": 5e-324},
+            ],
+            "constraints": [],
+        }
+    )
+
+    def extreme(point):
+        if float(point["x"]) >= 0.25:
+            return {"a": 1e308, "b": 0.0}
+        return {"a": 0.0, "b": 1e308}
+
+    result = optimize(
+        problem,
+        extreme,
+        evaluator_id="tests:extreme-cells",
+        config=RunConfig(4, seed=0, batch_size=2),
+    )
+    assert len(result.trials) == 4
+    assert len(result.frontier) >= 2

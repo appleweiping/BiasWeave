@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from biasweave._output import atomic_write_many, utf8
 from biasweave.errors import CheckpointError, ConfigurationError
 from biasweave.model import Objective, OptimizationResult, Trial
 from biasweave.quality import Attainment, FrontComparison, FrontQuality, measure_run
@@ -75,20 +76,34 @@ def summary_markdown(result: OptimizationResult) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_result(result: OptimizationResult, directory: str | Path) -> tuple[Path, Path]:
+def result_outputs(
+    result: OptimizationResult, directory: str | Path
+) -> tuple[tuple[Path, bytes], ...]:
+    """Render both result artifacts without making either one visible."""
+
     target = Path(directory)
     frontier_path = target / "frontier.json"
     summary_path = target / "summary.md"
     try:
-        target.mkdir(parents=True, exist_ok=True)
-        frontier_path.write_text(
-            json.dumps(result_data(result), indent=2, sort_keys=True, allow_nan=False) + "\n",
-            encoding="utf-8",
+        frontier = utf8(
+            json.dumps(result_data(result), indent=2, sort_keys=True, allow_nan=False) + "\n"
         )
-        summary_path.write_text(summary_markdown(result), encoding="utf-8")
-    except OSError as error:
+        summary = utf8(summary_markdown(result))
+    except (TypeError, ValueError, OverflowError) as error:
         raise CheckpointError(f"cannot write result under {target}: {error}") from error
-    return frontier_path, summary_path
+    return ((frontier_path, frontier), (summary_path, summary))
+
+
+def write_result(
+    result: OptimizationResult,
+    directory: str | Path,
+    *,
+    force: bool = False,
+    protected: Iterable[str | Path] = (),
+) -> tuple[Path, Path]:
+    outputs = result_outputs(result, directory)
+    written = atomic_write_many(outputs, force=force, protected=protected)
+    return written[0], written[1]
 
 
 def reference_line(quality: FrontQuality, objectives: Sequence[Objective]) -> str:
@@ -215,6 +230,6 @@ def frontier_table(trials: tuple[Trial, ...]) -> str:
     lines = ["trial  objectives  variables"]
     for trial in trials:
         objectives = ", ".join(f"{value:.6g}" for value in trial.objective_vector)
-        variables = json.dumps(trial.point.values, sort_keys=True, separators=(",", ":"))
+        variables = json.dumps(dict(trial.point.values), sort_keys=True, separators=(",", ":"))
         lines.append(f"{trial.trial_id:>5}  [{objectives}]  {variables}")
     return "\n".join(lines)

@@ -31,6 +31,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 
 from biasweave.dominance import pareto_front
 from biasweave.errors import ConfigurationError
@@ -281,6 +282,12 @@ def _box(vector: Vector, reference: Vector) -> float:
     return volume
 
 
+def _finite_indicator(value: float, name: str) -> float:
+    if not math.isfinite(value):
+        raise ConfigurationError(f"{name} exceeds the finite numeric range")
+    return value
+
+
 def _hypervolume_2d(vectors: list[Vector], reference: Vector) -> float:
     """Sweep an exact two-objective hypervolume in O(n log n).
 
@@ -341,17 +348,19 @@ def hypervolume(vectors: Iterable[Sequence[float]], reference_point: Sequence[fl
         return 0.0
     front = _nondominated(inside)
     if len(reference) == 1:
-        return reference[0] - min(point[0] for point in front)
-    if len(reference) == 2:
-        return _hypervolume_2d(front, reference)
-    limit = recursive_front_limit(len(reference))
-    if len(front) > limit:
-        raise ConfigurationError(
-            f"exact hypervolume at {len(reference)} objectives is limited to {limit} "
-            f"front points, received {len(front)}; measure a subset of the front or "
-            f"state a reference point that excludes part of it"
-        )
-    return _hypervolume_recursive(front, reference)
+        result = reference[0] - min(point[0] for point in front)
+    elif len(reference) == 2:
+        result = _hypervolume_2d(front, reference)
+    else:
+        limit = recursive_front_limit(len(reference))
+        if len(front) > limit:
+            raise ConfigurationError(
+                f"exact hypervolume at {len(reference)} objectives is limited to {limit} "
+                f"front points, received {len(front)}; measure a subset of the front or "
+                f"state a reference point that excludes part of it"
+            )
+        result = _hypervolume_recursive(front, reference)
+    return _finite_indicator(result, "hypervolume")
 
 
 def derive_reference_point(
@@ -378,8 +387,29 @@ def derive_reference_point(
     for index in range(len(points[0])):
         column = [point[index] for point in points]
         worst = max(column)
-        span = worst - min(column)
-        reference.append(worst + margin * (span if span > 0.0 else DEGENERATE_SPAN))
+        exact_span = Fraction.from_float(worst) - Fraction.from_float(min(column))
+        basis = exact_span if exact_span > 0 else Fraction.from_float(DEGENERATE_SPAN)
+        exact_bound = Fraction.from_float(worst) + Fraction.from_float(margin) * basis
+        try:
+            bound = float(exact_bound)
+        except OverflowError as error:
+            raise ConfigurationError(
+                "derived reference point exceeds the finite numeric range; "
+                "supply an explicit finite reference point"
+            ) from error
+        if not math.isfinite(bound):
+            raise ConfigurationError(
+                "derived reference point exceeds the finite numeric range; "
+                "supply an explicit finite reference point"
+            )
+        if exact_bound > Fraction.from_float(worst) and bound <= worst:
+            bound = math.nextafter(worst, math.inf)
+            if not math.isfinite(bound):
+                raise ConfigurationError(
+                    "derived reference point exceeds the finite numeric range; "
+                    "supply an explicit finite reference point"
+                )
+        reference.append(bound)
     return tuple(reference)
 
 
@@ -399,9 +429,18 @@ def spacing(vectors: Iterable[Sequence[float]]) -> float:
         min(math.dist(point, points[other]) for other in range(len(points)) if other != index)
         for index, point in enumerate(points)
     ]
-    mean = math.fsum(distances) / len(distances)
-    variance = math.fsum((distance - mean) ** 2 for distance in distances) / len(distances)
-    return math.sqrt(variance)
+    if not all(math.isfinite(distance) for distance in distances):
+        raise ConfigurationError("spacing exceeds the finite numeric range")
+    scale = max(distances)
+    if scale == 0.0:
+        return 0.0
+    normalized = [distance / scale for distance in distances]
+    mean = math.fsum(normalized) / len(normalized)
+    variance = math.fsum((distance - mean) ** 2 for distance in normalized) / len(normalized)
+    result = math.sqrt(variance) * scale
+    if not math.isfinite(result):
+        raise ConfigurationError("spacing exceeds the finite numeric range")
+    return result
 
 
 def coverage(left: Iterable[Sequence[float]], right: Iterable[Sequence[float]]) -> float:
@@ -438,10 +477,11 @@ def epsilon_indicator(left: Iterable[Sequence[float]], right: Iterable[Sequence[
     target = _validated(right, dimension=len(shifting[0]) if shifting else None)
     if not shifting or not target:
         raise ConfigurationError("the epsilon indicator needs a point in each front")
-    return max(
+    result = max(
         min(max(a - b for a, b in zip(point, other, strict=True)) for point in shifting)
         for other in target
     )
+    return _finite_indicator(result, "epsilon indicator")
 
 
 def _feasible_vectors(trials: Iterable[Trial]) -> list[Vector]:
@@ -499,7 +539,10 @@ def _measure(vectors: list[Vector], reference: Vector) -> FrontQuality:
         if all(value < bound for value, bound in zip(point, reference, strict=True))
     ]
     extent = tuple(
-        (max(point[index] for point in vectors) - min(point[index] for point in vectors))
+        _finite_indicator(
+            max(point[index] for point in vectors) - min(point[index] for point in vectors),
+            "front extent",
+        )
         if vectors
         else 0.0
         for index in range(len(reference))

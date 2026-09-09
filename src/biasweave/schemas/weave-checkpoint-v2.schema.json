@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/appleweiping/BiasWeave/schemas/weave-checkpoint-v2.schema.json",
+  "title": "BiasWeave weave checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "package_version", "strategy", "strategy_schema_version",
+    "strategy_parameters", "problem_sha256", "evaluator_id", "seed", "batch_size",
+    "completed_trials", "stagnation", "generator", "batch_ends", "pending_keys"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "package_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "strategy": {"const": "weave"},
+    "strategy_schema_version": {"const": 1},
+    "strategy_parameters": {"type": "object", "maxProperties": 0},
+    "problem_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "evaluator_id": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "seed": {"type": "integer"},
+    "batch_size": {"type": "integer", "minimum": 1},
+    "completed_trials": {"type": "integer", "minimum": 0},
+    "stagnation": {"type": "integer", "minimum": 0},
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage_index", "proposal_index", "radius", "random_state", "finite_cursor"],
+      "properties": {
+        "coverage_index": {"type": "integer", "minimum": 0},
+        "proposal_index": {"type": "integer", "minimum": 0},
+        "radius": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "random_state": {"type": "array"},
+        "finite_cursor": {"type": "integer", "minimum": 0}
+      }
+    },
+    "batch_ends": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 100000},
+    "pending_keys": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "maxItems": 100000}
+  }
+}

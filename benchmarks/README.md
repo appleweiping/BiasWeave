@@ -23,9 +23,28 @@ The representative uses equal normalized L1 objective contributions over the
 observed feasible Pareto front. A sizing-decision export replays the complete
 seeded comparison before binding the selected point to its comparison digest.
 
+Run a same-budget descriptive catalog sweep:
+
+```console
+biasweave catalog-benchmark --contract benchmarks/manifest.json \
+  --budget 64 --seed 17 --population-size 16 --output catalog.json
+```
+
+This gives all seven strategies exactly 64 analytic-proxy evaluations and reports the same metrics for each. It is a
+reproducibility smoke benchmark, not a ranking: one seed has no uncertainty estimate, algorithms use different natural
+batch structures, and proxy performance is not circuit performance. A defensible comparative study should publish a
+seed set, retain every ledger, use the same simulator/corners and budget, and report distributions of feasible rate and
+front-quality indicators rather than selecting the best single run.
+
 `python benchmarks/scaling.py --budgets 16,64,256 --repetitions 3 --seed 17`
 records workload/environment hashes and same-budget invariants at increasing
 evaluation counts. Budgets and repetitions are bounded integers, and seeds use
 the portable signed 64-bit integer range. The timing and throughput fields are
 descriptive and are not acceptance thresholds. Each report identifies the installed
 distribution, imported Python package tree, and exact scaling harness by content hash.
+
+`python benchmarks/dedup_scaling.py --budgets 1000,5000,10000 --repetitions 3 --seed 17`
+isolates the persistent decoded-key bookkeeping used by the catalog runner. It records an exact trajectory digest and
+requires every evaluation to remain unique at each scale. The runner now passes only newly told keys through optimizer
+state instead of copying the complete growing set on every batch. Timings remain descriptive because host load and
+Python builds vary.

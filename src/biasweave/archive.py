@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 from biasweave.dominance import pareto_front
 from biasweave.model import Problem, Trial, TrialStatus
@@ -62,7 +63,7 @@ class Archive:
         cells: dict[tuple[int, ...], list[Trial]] = {}
         for trial in self._frontier:
             cell = tuple(
-                math.floor(value / objective.epsilon)
+                Fraction.from_float(value) // Fraction.from_float(objective.epsilon)
                 for value, objective in zip(
                     trial.objective_vector, self.problem.objectives, strict=True
                 )

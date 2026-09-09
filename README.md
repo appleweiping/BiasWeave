@@ -7,7 +7,8 @@
 
 BiasWeave is a dependency-free Python toolkit for reproducible, constraint-first, multi-objective device-sizing
 searches. It explores continuous, integer, categorical, and linked design variables, keeps an exact feasible Pareto
-front, and writes an append-only record that can be resumed without losing proposal state.
+front, and writes an append-only evaluation record. The native `weave` strategy can resume without losing proposal
+state; the optimizer catalog provides reproducible fresh runs under one typed execution contract.
 
 The optimizer is evaluator-agnostic. A trusted Python function or an executable receiving JSON can connect it to an
 analytic model, a simulator wrapper, or a measured-data workflow. BiasWeave never runs a shell and never assumes that
@@ -30,6 +31,8 @@ noise, or yield remain hard constraints. BiasWeave makes that distinction explic
 - infeasible points are ordered by normalized constraint violation;
 - feasible points use exact Pareto dominance across all objectives;
 - three deterministic proposal strands provide global coverage, frontier refinement, and constraint repair;
+- six additional, independent strategies provide uniform random search, simulated annealing, particle swarm,
+  differential evolution, NSGA-II, and MOEA/D;
 - every evaluated point, including evaluator failures, receives a stable trial ID;
 - a checkpoint contains enough state to continue the same search sequence.
 
@@ -37,8 +40,9 @@ The scope stops there on purpose. The optimizer has no unit system and no techno
 variable and metric names are opaque identifiers, and everything circuit-specific belongs in the evaluator you supply.
 Parallelism is a thread pool on one machine whose results are still committed in trial-ID order; there is no
 distributed scheduler, and `command:` evaluators are started with `shell=False`. There is no convergence detector
-either. A run stops on its budget, an optional wall-time limit, an optional stagnation counter, or an exhausted finite
-search space, and the reported front is exactly what those evaluations found. `biasweave quality` answers the related
+either. A run stops on its budget, an optional wall-time limit, an optional stagnation counter, a proven exhausted
+finite search space, or `proposal_stalled` on a non-enumerable domain, and the reported front is exactly what those
+evaluations found. `biasweave quality` answers the related
 question afterwards, describing what a finished run attained rather than deciding when a running one should stop.
 
 BiasWeave is an optimizer and experiment recorder. It is not a circuit simulator, compact model, PDK, sign-off tool, or
@@ -90,6 +94,22 @@ biasweave quality \
   --ledger artifacts/two-stage-ota/trials.jsonl --curve
 ```
 
+Select another optimizer explicitly. Population size applies only to `pso`, `de`, `nsga2`, and `moead`:
+
+```console
+biasweave run \
+  --problem examples/two_stage_ota/problem.toml \
+  --evaluator python:biasweave.demo:evaluate \
+  --strategy nsga2 --population-size 24 \
+  --budget 120 --seed 7 --workers 4 --batch-size 8 \
+  --out artifacts/two-stage-nsga2
+```
+
+All strategies enforce decoded-point uniqueness, consume no more than the exact budget, and commit parallel results in
+proposal order. See [the optimizer catalog](docs/optimizers.md) for algorithm semantics and selection guidance.
+Enumerable integer, choice, and quantized products use a deterministic fallback until the budget is spent or complete
+domain coverage is proven; retry limits alone are never reported as exhaustion.
+
 The example equations are synthetic and documented as such. They demonstrate the interface; they do not predict a
 fabricated circuit.
 
@@ -106,7 +126,10 @@ biasweave resume \
 ```
 
 The problem digest, evaluator identifier, seed, and batch size must match the checkpoint. This prevents an accidental
-continuation under changed semantics.
+continuation under changed semantics. Checkpoint/resume currently applies to `weave`; catalog strategies write
+`catalog-run.json` and a complete ledger but start a fresh algorithm state on each run.
+Both run metadata formats carry package, strategy-schema, and effective-hyperparameter provenance; their Draft 2020-12
+schemas ship inside the wheel. A versioned golden fixture pins seeded trajectories for every catalog strategy.
 
 ## Problem format
 
@@ -158,8 +181,12 @@ scale = 10.0
 
 Variable kinds:
 
-- `real` requires finite `low < high`; `scale` is `linear` or `log`, and optional `quantum` snaps values.
-- `integer` requires integer inclusive bounds.
+- `real` requires finite `low < high`; `scale` is `linear` or `log`, and optional `quantum` snaps values. Linear
+  interpolation avoids forming an overflowing interval width, while logarithmic defaults and coordinates are computed
+  in log space; ULP-scale positive intervals use stable log-ratio arithmetic instead of subtracting equal rounded logs.
+- `integer` requires integer inclusive bounds. Decoding uses exact rational arithmetic. Encoding an explicitly supplied
+  value verifies the normalized float round trip and rejects an interior value that cannot be identified exactly,
+  instead of silently substituting a neighboring integer in a very wide interval.
 - `choice` requires a non-empty unique array of finite numbers or strings.
 - `linked` computes `source * factor + offset` and consumes no search coordinate.
 
@@ -243,10 +270,21 @@ metric is recorded as a failed trial instead of terminating the search.
 An output directory contains:
 
 - `trials.jsonl`: append-only, fsync'd record of every completed trial;
-- `run.json`: atomically replaced compatibility and proposal-state checkpoint;
+- `run.json`: atomically replaced compatibility and proposal-state checkpoint for `weave`, or `catalog-run.json` with
+  final strategy provenance for another catalog algorithm;
 - `frontier.json`: deterministic machine-readable summary, complete feasible front, and the quality of
   that front under a reference point derived from every feasible trial the run recorded;
 - `summary.md`: compact human-readable run summary, including the same front-quality block.
+
+Fresh run and report outputs are no-clobber. Pass `--force` only when replacement is intended; it is race-safe and
+transactional, and it never permits a problem, contract, ledger, or comparison input alias to be overwritten. Before
+the first evaluation, a persisted `weave` run installs `trials.jsonl`, `run.json`, `frontier.json`, and `summary.md` as
+one new `in_progress` generation, so cancellation cannot leave reports from the previous forced run beside a new
+checkpoint. A nonce-owned, run-scoped single-writer claim covers each checkpoint transition; rollback before the
+explicit commit point touches only identities installed by that transaction, so a concurrent replacement is never
+deleted as cleanup. An interruption after every new identity is installed preserves the committed outputs, re-raises
+the original exception with a commit note, and leaves any uncertain backup fail-closed for inspection.
+Command evaluators have independent bounded stdout/stderr capture and are killed and reaped on overflow or timeout.
 
 A malformed complete ledger line is rejected. A truncated final line without its newline is ignored, which permits
 recovery after interruption during the final append. Trial IDs before that tail must be contiguous from zero.
@@ -377,6 +415,28 @@ result = optimize(
 The returned result exposes all trials and the feasible exact Pareto front. Parallel evaluators may finish in any order,
 but BiasWeave commits their results in trial-ID order. Determinism assumes the evaluator itself is deterministic and
 safe under the requested worker count.
+
+Every catalog strategy uses the same runner and result type:
+
+```python
+from biasweave import StrategyName, optimize_strategy
+
+result = optimize_strategy(
+    problem,
+    evaluator,
+    evaluator_id="python:my_project.models:evaluate",
+    config=RunConfig(budget=100, seed=7, workers=4, batch_size=8),
+    strategy=StrategyName.DE,
+    population_size=20,
+    output_directory="artifacts/de-7",
+)
+```
+
+Advanced integrations can call `create_optimizer(...)` directly. Its strict synchronous `ask(count, seen_keys)` /
+`tell(trials)` protocol requires one complete ordered batch before the next ask; this is the boundary that separates
+deterministic algorithm state from evaluator scheduling.
+The optimizer remembers told point keys, while `seen_keys` imports evaluations from before construction. Points and
+accepted metric mappings are immutable, and `tell` replays decoding and assessment before changing optimizer state.
 
 `biasweave.quality` measures a finished run. `measure_run` is the entry point that keeps one reference point across
 everything it returns:

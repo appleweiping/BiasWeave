@@ -11,6 +11,7 @@ from typing import Any
 from biasweave.archive import Archive
 from biasweave.encoding import default_coordinates, make_point
 from biasweave.model import Point, Problem, Trial, TrialStatus
+from biasweave.search_space import FiniteDomainEnumerator
 
 _STRIDES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53)
 _MODULUS = 1009
@@ -27,6 +28,9 @@ class ProposalGenerator:
         self.coverage_index = 0
         self.proposal_index = 0
         self.radius = 0.2
+        self._finite_domain = FiniteDomainEnumerator(problem)
+        self._seen_keys: set[str] = set()
+        self.empty_reason: str | None = None
 
     def restore(self, completed_trials: int) -> None:
         """Use conservative counters when resuming a legacy checkpoint."""
@@ -39,13 +43,20 @@ class ProposalGenerator:
             "proposal_index": self.proposal_index,
             "radius": self.radius,
             "random_state": self.random.getstate(),
+            "finite_cursor": self._finite_domain.cursor,
         }
 
     def restore_snapshot(self, state: Mapping[str, Any]) -> None:
         def tuples(value: Any) -> Any:
             return tuple(tuples(item) for item in value) if isinstance(value, list) else value
 
-        required = {"coverage_index", "proposal_index", "radius", "random_state"}
+        required = {
+            "coverage_index",
+            "proposal_index",
+            "radius",
+            "random_state",
+            "finite_cursor",
+        }
         if set(state) != required:
             raise ValueError("generator snapshot has unexpected fields")
         coverage = state["coverage_index"]
@@ -61,6 +72,7 @@ class ProposalGenerator:
         if not math.isfinite(numeric_radius) or not 0.0 < numeric_radius <= 1.0:
             raise ValueError("radius must be finite and in (0, 1]")
         self.random.setstate(tuples(state["random_state"]))
+        self._finite_domain.restore_cursor(state["finite_cursor"])
         self.coverage_index = coverage
         self.proposal_index = proposal
         self.radius = numeric_radius
@@ -141,18 +153,31 @@ class ProposalGenerator:
     ) -> list[Point]:
         """Return at most `count` new decoded points."""
         points: list[Point] = []
-        local_seen = set(seen_keys)
+        self.empty_reason = None
+        self._seen_keys.update(seen_keys)
+        local_seen: set[str] = set()
         attempts = 0
         maximum_attempts = max(100, count * 100)
         while len(points) < count and attempts < maximum_attempts:
-            if not local_seen and not points:
+            if not self._seen_keys and not points:
                 coordinates = default_coordinates(self.problem)
             else:
                 coordinates = self._strand(archive, trials)
             point = make_point(self.problem, coordinates)
             attempts += 1
-            if point.key in local_seen:
+            if point.key in self._seen_keys or point.key in local_seen:
                 continue
             local_seen.add(point.key)
             points.append(point)
+        while len(points) < count and self._finite_domain.finite:
+            fallback = self._finite_domain.next_unseen(self._seen_keys, local_seen)
+            if fallback is None:
+                break
+            local_seen.add(fallback.key)
+            points.append(fallback)
+        self._seen_keys.update(local_seen)
+        if len(points) < count:
+            self.empty_reason = (
+                "search_space_exhausted" if self._finite_domain.exhausted else "proposal_stalled"
+            )
         return points

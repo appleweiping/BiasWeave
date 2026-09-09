@@ -13,34 +13,74 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  RELEASE_PROJECT_NAME: biasweave
+  RELEASE_PROJECT_VERSION: "0.4.0"
+  RELEASE_SYFT_VERSION: "1.51.1"
+
 jobs:
-  verify-ci:
-    name: Require main ancestry and successful CI
-    if: github.event_name == 'push'
+  verify-source:
+    name: Verify source identity and successful CI
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
       actions: read
       contents: read
     steps:
-      - name: Check out complete history
+      # This job performs no import, hook, build, dependency install, or other
+      # execution from the selected revision before its identity is trusted.
+      - name: Fetch complete history without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
-      - name: Verify tag commit is reachable from main
+      - name: Verify signed tag and exact commit before executing source
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "release workflow must run from a version tag, not $GITHUB_REF" >&2; exit 1 ;;
+          esac
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
-            echo "release commit is not reachable from origin/main" >&2
+          canonical_main="$(git rev-parse origin/main)"
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          git show origin/main:.github/allowed_signers > "$RUNNER_TEMP/allowed_signers"
+          git -c gpg.format=ssh \
+            -c gpg.ssh.allowedSignersFile="$RUNNER_TEMP/allowed_signers" \
+            verify-tag --raw "refs/tags/$RELEASE_TAG"
+          resolved="$(git rev-parse "refs/tags/$RELEASE_TAG^{}")"
+          if [ "$resolved" != "$GITHUB_SHA" ]; then
+            echo "tag target differs from the workflow commit" >&2
             exit 1
-          }
-      - name: Wait for the complete CI workflow on this commit
+          fi
+          git merge-base --is-ancestor "$resolved" "$canonical_main"
+      - name: Require a verified signature on the exact source commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          verified="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.verification.verified')"
+          if [ "$verified" != true ]; then
+            echo "release source commit does not have a GitHub-verified signature" >&2
+            exit 1
+          fi
+      - name: Wait for complete CI on the verified commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           for attempt in $(seq 1 90); do
-            successful="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100" --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+            successful="$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+              --jq "[.workflow_runs[] | select(.conclusion == \"success\" and .event == \"push\" and .head_branch == \"main\" and .head_sha == \"$GITHUB_SHA\")] | length")"
             if [ "$successful" -gt 0 ]; then
               echo "verified successful CI workflow for $GITHUB_SHA"
               exit 0
@@ -53,28 +93,30 @@ jobs:
 
   build:
     name: Build and verify distributions
-    needs: verify-ci
-    if: >-
-      ${{ always() && (github.event_name == 'workflow_dispatch' ||
-      needs.verify-ci.result == 'success') }}
+    needs: verify-source
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
-      - name: Check out source
+      - name: Check out verified source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Set up Python
+      - name: Set up exact Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install pinned uv and frozen development environment
-        run: |
-          python -m pip install --disable-pip-version-check uv==0.11.21
-          uv sync --frozen --extra dev
+          python-version: "3.11.16"
+      - name: Set up checksum-verified uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.21"
+          checksum: 8c88519b0ef0af9801fcdee419bbb12116bd9e6b18e162ae093c932d8b264050
+          enable-cache: false
+          download-from-astral-mirror: false
+      - name: Install frozen development environment
+        run: uv sync --frozen --extra dev
       - name: Run release quality gate
         run: |
           uv run --frozen ruff check .
@@ -82,70 +124,64 @@ jobs:
           uv run --frozen mypy --python-version 3.11 src
           uv run --frozen bandit -q -r src
           uv run --frozen pytest --cov=biasweave --cov-branch --cov-report=term-missing
-      - name: Verify tag matches package version
+      - name: Bind project version to the verified tag
         env:
-          RELEASE_EVENT: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python - <<'PY'
-          import os
-          import tomllib
-          from pathlib import Path
-
-          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          if os.environ["RELEASE_EVENT"] == "push":
-              expected = f"v{version}"
-              if os.environ["RELEASE_TAG"] != expected:
-                  raise SystemExit(
-                      f"release tag {os.environ['RELEASE_TAG']!r} does not match {expected!r}"
-                  )
-          print(f"validated project version {version}")
-          PY
+          version="$(uv run --frozen python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$version" != "$RELEASE_PROJECT_VERSION" ]; then
+            echo "project version $version does not match workflow version $RELEASE_PROJECT_VERSION" >&2
+            exit 1
+          fi
+          if [ "$RELEASE_TAG" != "v$version" ]; then
+            echo "release tag $RELEASE_TAG does not match v$version" >&2
+            exit 1
+          fi
       - name: Fix build timestamp to the source commit
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
       - name: Build from a clean output directory
         run: |
-          rm -rf dist build
+          rm -rf -- dist build
           uv run --frozen python -m build --no-isolation
-      - name: Validate distribution metadata and shape
+      - name: Validate distribution metadata and every archive member
         run: |
           uv run --frozen python -m twine check --strict dist/*
-          python - <<'PY'
+          uv run --frozen python -I src/biasweave/release_gate.py \
+            distributions dist "$RELEASE_PROJECT_VERSION"
+      - name: Run the full suite from the exact source distribution
+        run: |
+          set -euo pipefail
+          source_root="$(mktemp -d "$RUNNER_TEMP/biasweave-sdist.XXXXXX")"
+          python -I - "$source_root" "dist/biasweave-$RELEASE_PROJECT_VERSION.tar.gz" <<'PY'
+          import sys
           import tarfile
-          import zipfile
           from pathlib import Path
 
-          wheels = tuple(Path("dist").glob("*.whl"))
-          sdists = tuple(Path("dist").glob("*.tar.gz"))
-          if len(wheels) != 1 or len(sdists) != 1 or len(tuple(Path("dist").iterdir())) != 2:
-              raise SystemExit("expected exactly one wheel and one .tar.gz source distribution")
-          with tarfile.open(sdists[0], "r:gz") as archive:
-              source_names = {"/".join(name.split("/")[1:]) for name in archive.getnames()}
-          required_source = {
-              "CITATION.cff",
-              "benchmarks/manifest.json",
-              "benchmarks/sky130-common-source.json",
-              "benchmarks/sky130-sizing-decision.json",
-              "docs/schemas/analog-sizing-benchmark-1.schema.json",
-              "docs/schemas/sizing-decision-1.schema.json",
-          }
-          if missing := required_source - source_names:
-              raise SystemExit(f"source distribution is missing: {sorted(missing)}")
-          with zipfile.ZipFile(wheels[0]) as archive:
-              wheel_names = set(archive.namelist())
-          required_wheel = {"biasweave/_version.py", "biasweave/py.typed"}
-          if missing := required_wheel - wheel_names:
-              raise SystemExit(f"wheel is missing: {sorted(missing)}")
+          destination = Path(sys.argv[1]).resolve(strict=True)
+          archive_path = Path(sys.argv[2]).resolve(strict=True)
+          with tarfile.open(archive_path, "r:gz") as archive:
+              archive.extractall(destination, filter="data")
           PY
-      - name: Install wheel and smoke-check metadata and CLI version
+          cd "$source_root/biasweave-$RELEASE_PROJECT_VERSION"
+          uv sync --frozen --extra dev
+          uv run --frozen pytest
+      - name: Install wheel and smoke-check metadata and optimizer API
         run: |
           python -m venv .release-smoke
-          .release-smoke/bin/python -m pip install --disable-pip-version-check --no-deps dist/*.whl
+          .release-smoke/bin/python -m pip install \
+            --disable-pip-version-check --no-deps \
+            "dist/biasweave-$RELEASE_PROJECT_VERSION-py3-none-any.whl"
           .release-smoke/bin/python -I - <<'PY'
+          import json
           import subprocess
           from importlib.metadata import version
+          from importlib.resources import files
 
           import biasweave
+          from biasweave.model import RunConfig
+          from biasweave.optimizers import StrategyName
+          from biasweave.problem import parse_problem
+          from biasweave.strategy import optimize_strategy
 
           expected = version("biasweave")
           if biasweave.__version__ != expected:
@@ -158,12 +194,94 @@ jobs:
           )
           if completed.stdout.strip() != f"BiasWeave {expected}":
               raise SystemExit("CLI version does not match distribution metadata")
+          schema_root = files("biasweave").joinpath("schemas")
+          for name in ("catalog-run-v1.schema.json", "weave-checkpoint-v2.schema.json"):
+              if json.loads(schema_root.joinpath(name).read_text())["$schema"] != (
+                  "https://json-schema.org/draft/2020-12/schema"
+              ):
+                  raise SystemExit(f"packaged schema is invalid: {name}")
+          problem = parse_problem({
+              "schema_version": 1,
+              "variables": {"x": {"kind": "real", "low": 0.0, "high": 1.0}},
+              "objectives": [
+                  {"metric": "a", "goal": "min", "scale": 1.0},
+                  {"metric": "b", "goal": "min", "scale": 1.0},
+              ],
+              "constraints": [],
+          })
+          population = {StrategyName.PSO, StrategyName.DE, StrategyName.NSGA2, StrategyName.MOEAD}
+          for strategy in StrategyName:
+              result = optimize_strategy(
+                  problem,
+                  lambda point: {"a": float(point["x"]), "b": 1.0 - float(point["x"])},
+                  evaluator_id="release-smoke:v1",
+                  config=RunConfig(8, seed=7, batch_size=4),
+                  strategy=strategy,
+                  population_size=4 if strategy in population else None,
+              )
+              if len(result.trials) != 8 or len({trial.point.key for trial in result.trials}) != 8:
+                  raise SystemExit(f"optimizer smoke failed: {strategy.value}")
           PY
-      - name: Upload verified distributions
+          site_packages="$(.release-smoke/bin/python -I -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          installation_root="$(realpath .release-smoke)"
+          workspace_root="$(realpath "$GITHUB_WORKSPACE")"
+          if [ "$installation_root" != "$workspace_root/.release-smoke" ]; then
+            echo "release virtual environment resolved outside its expected root" >&2
+            exit 1
+          fi
+          case "$site_packages" in
+            "$installation_root"/*) ;;
+            *) echo "installed site-packages escaped the release virtual environment" >&2; exit 1 ;;
+          esac
+          echo "RELEASE_INSTALLATION_ROOT=$installation_root" >> "$GITHUB_ENV"
+          echo "RELEASE_SITE_PACKAGES=$site_packages" >> "$GITHUB_ENV"
+      - name: Generate SPDX software bill of materials
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        env:
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+          SYFT_FILE_METADATA_SELECTION: all
+          SYFT_SOURCE_NAME: ${{ env.RELEASE_PROJECT_NAME }}
+          SYFT_SOURCE_VERSION: ${{ env.RELEASE_PROJECT_VERSION }}
+        with:
+          path: .release-smoke
+          format: spdx-json
+          output-file: dist/SBOM.spdx.json
+          syft-version: v${{ env.RELEASE_SYFT_VERSION }}
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Bind and validate the installed-wheel SBOM and release checksums
+        run: |
+          uv run --frozen python -I src/biasweave/release_artifacts.py bind-installed-wheel \
+            --sbom dist/SBOM.spdx.json \
+            --site-packages "$RELEASE_SITE_PACKAGES" \
+            --installation-root "$RELEASE_INSTALLATION_ROOT" \
+            --expected-external-path "bin/biasweave" \
+            --wheel "dist/biasweave-$RELEASE_PROJECT_VERSION-py3-none-any.whl" \
+            --name "$RELEASE_PROJECT_NAME" \
+            --version "$RELEASE_PROJECT_VERSION"
+          uv run --frozen python -I src/biasweave/release_artifacts.py validate-sbom \
+            --sbom dist/SBOM.spdx.json \
+            --name "$RELEASE_PROJECT_NAME" \
+            --version "$RELEASE_PROJECT_VERSION" \
+            --syft-version "$RELEASE_SYFT_VERSION"
+          uv run --frozen python -I src/biasweave/release_artifacts.py write-checksums \
+            --directory dist \
+            --name "$RELEASE_PROJECT_NAME" \
+            --version "$RELEASE_PROJECT_VERSION"
+          uv run --frozen python -I src/biasweave/release_artifacts.py verify-release \
+            --directory dist \
+            --name "$RELEASE_PROJECT_NAME" \
+            --version "$RELEASE_PROJECT_VERSION" \
+            --syft-version "$RELEASE_SYFT_VERSION"
+      - name: Upload exact verified release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-distributions
-          path: dist/*
+          path: |
+            dist/biasweave-${{ env.RELEASE_PROJECT_VERSION }}-py3-none-any.whl
+            dist/biasweave-${{ env.RELEASE_PROJECT_VERSION }}.tar.gz
+            dist/SBOM.spdx.json
+            dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
 
@@ -178,15 +296,27 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - name: Check out the verified release helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Download verified distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-distributions
           path: dist
+      - name: Re-verify downloaded release assets
+        run: >-
+          python -I src/biasweave/release_artifacts.py verify-release
+          --directory dist
+          --name "$RELEASE_PROJECT_NAME"
+          --version "$RELEASE_PROJECT_VERSION"
+          --syft-version "$RELEASE_SYFT_VERSION"
       - name: Attest verified distributions
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*
+          subject-checksums: dist/SHA256SUMS
 
   github-release:
     name: Create GitHub release
@@ -199,23 +329,43 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the verified release helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Download verified distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-distributions
           path: dist
+      - name: Re-verify downloaded release assets
+        run: >-
+          python -I src/biasweave/release_artifacts.py verify-release
+          --directory dist
+          --name "$RELEASE_PROJECT_NAME"
+          --version "$RELEASE_PROJECT_VERSION"
+          --syft-version "$RELEASE_SYFT_VERSION"
       - name: Create release exactly once
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
-          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
-            echo "release tag moved: expected $GITHUB_SHA, resolved $tag_sha" >&2
+          set -euo pipefail
+          resolved_sha="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+          if [ "$resolved_sha" != "$GITHUB_SHA" ]; then
+            echo "tag moved during release: expected $GITHUB_SHA, resolved $resolved_sha" >&2
             exit 1
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "GitHub release $RELEASE_TAG already exists; refusing to replace its assets."
             exit 1
           fi
-          gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --repo "$GITHUB_REPOSITORY"
+          gh release create "$RELEASE_TAG" \
+            "./dist/biasweave-$RELEASE_PROJECT_VERSION-py3-none-any.whl" \
+            "./dist/biasweave-$RELEASE_PROJECT_VERSION.tar.gz" \
+            ./dist/SBOM.spdx.json ./dist/SHA256SUMS \
+            --verify-tag --generate-notes --repo "$GITHUB_REPOSITORY"

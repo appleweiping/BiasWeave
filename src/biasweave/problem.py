@@ -25,6 +25,10 @@ from biasweave.model import (
 _MAX_PROBLEM_BYTES = 1_048_576
 _MAX_PROBLEM_DEPTH = 64
 _MAX_PROBLEM_NODES = 10_000
+_MAX_IDENTIFIER_CHARS = 256
+_MAX_SCALAR_TEXT_CHARS = 65_536
+_MAX_INTEGER_CHARACTERS = 128
+_LOG1P_RELATIVE_THRESHOLD = 1e-8
 
 
 def _table(value: Any, context: str) -> Mapping[str, Any]:
@@ -42,7 +46,10 @@ def _unknown(table: Mapping[str, Any], allowed: set[str], context: str) -> None:
 def _text(value: Any, context: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ProblemError(f"{context} must be a non-empty string")
-    return value.strip()
+    result = value.strip()
+    if len(result) > _MAX_IDENTIFIER_CHARS:
+        raise ProblemError(f"{context} must be at most {_MAX_IDENTIFIER_CHARS} characters")
+    return result
 
 
 def _finite(value: Any, context: str) -> float:
@@ -77,6 +84,10 @@ def _scalar(value: Any, context: str) -> int | float | str:
         raise ProblemError(f"{context} must be a string or finite number")
     if isinstance(value, float) and not math.isfinite(value):
         raise ProblemError(f"{context} must be finite")
+    if isinstance(value, int) and len(str(abs(value))) > _MAX_INTEGER_CHARACTERS:
+        raise ProblemError(f"{context} integer exceeds {_MAX_INTEGER_CHARACTERS} digits")
+    if isinstance(value, str) and len(value) > _MAX_SCALAR_TEXT_CHARS:
+        raise ProblemError(f"{context} string exceeds {_MAX_SCALAR_TEXT_CHARS} characters")
     return value
 
 
@@ -85,6 +96,17 @@ def _bounded_default(default: Any, low: float, high: float, context: str) -> flo
     if not low <= result <= high:
         raise ProblemError(f"{context} must be within [{low}, {high}]")
     return result
+
+
+def _log_midpoint(low: float, high: float) -> float:
+    """Return a bounded geometric midpoint, including ULP-scale intervals."""
+
+    relative_span = (high - low) / low
+    if math.isfinite(relative_span) and relative_span < _LOG1P_RELATIVE_THRESHOLD:
+        result = low + low * math.expm1(math.log1p(relative_span) / 2.0)
+    else:
+        result = math.exp((math.log(low) + math.log(high)) / 2.0)
+    return min(high, max(low, result))
 
 
 def _variable(name: str, raw: Any) -> Variable:
@@ -103,9 +125,15 @@ def _variable(name: str, raw: Any) -> Variable:
             raise ProblemError(f"{context}.low must be positive for logarithmic scaling")
         quantum = table.get("quantum")
         quantum_value = _positive(quantum, f"{context}.quantum") if quantum is not None else None
-        default = table.get(
-            "default", math.sqrt(low * high) if scale is VariableScale.LOG else (low + high) / 2
-        )
+        if scale is VariableScale.LOG:
+            # Work in log space: ``low * high`` can overflow even though the
+            # geometric mean is a perfectly representable value.
+            implicit_default = _log_midpoint(low, high)
+        else:
+            span = high - low
+            # The ordinary midpoint overflows for wide, finite intervals.
+            implicit_default = low + span / 2.0 if math.isfinite(span) else low / 2.0 + high / 2.0
+        default = table.get("default", implicit_default)
         default_value = _bounded_default(default, low, high, f"{context}.default")
         return Variable(name, kind, low, high, scale, quantum_value, default=default_value)
 
@@ -117,6 +145,11 @@ def _variable(name: str, raw: Any) -> Variable:
             raise ProblemError(f"{context}.low must be an integer")
         if isinstance(high_raw, bool) or not isinstance(high_raw, int):
             raise ProblemError(f"{context}.high must be an integer")
+        if (
+            len(str(abs(low_raw))) > _MAX_INTEGER_CHARACTERS
+            or len(str(abs(high_raw))) > _MAX_INTEGER_CHARACTERS
+        ):
+            raise ProblemError(f"{context} integer bounds exceed {_MAX_INTEGER_CHARACTERS} digits")
         if low_raw > high_raw:
             raise ProblemError(f"{context}.low must not exceed high")
         default = table.get("default", (low_raw + high_raw) // 2)
@@ -228,6 +261,9 @@ def parse_problem(
     variables = tuple(
         _variable(_text(name, "variable name"), raw) for name, raw in raw_variables.items()
     )
+    variable_names = [variable.name for variable in variables]
+    if len(variable_names) != len(set(variable_names)):
+        raise ProblemError("variable names must be unique after trimming")
     _check_links(variables)
     if not any(variable.free for variable in variables):
         raise ProblemError("problem must contain at least one free variable")

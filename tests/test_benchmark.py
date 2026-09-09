@@ -105,13 +105,13 @@ def test_sky130_reference_contract_exports_a_content_bound_point() -> None:
     assert selected is not None
     assert selected["values"]["topology_id"] == "TL-00052f7b8c5e"
     assert (
-        selected["point_key"] == "5a307408195ba83bca3db375f4050c27eee1b50bff1ee00313f52b77dacce8ee"
+        selected["point_key"] == "b18a4dea3812c8c6faa4f34ee2f271a90210c84ee51fdf07aa6ae73dd253b31b"
     )
     decision = sizing_decision(benchmark, comparison)
     assert decision["source"]["topology_signature"] == (
         "086ce3f4158fa05ea8fddf2e7552af1d9774f95faffbe4dee11fae262d8857c8"
     )
-    assert decision["variables"]["width_um"] == pytest.approx(4.4721359549995805)
+    assert decision["variables"]["width_um"] == pytest.approx(4.472135954999578)
     assert len(decision["decision_sha256"]) == 64
     assert decision == json.loads(
         Path("benchmarks/sky130-sizing-decision.json").read_text(encoding="utf-8")
@@ -432,7 +432,7 @@ def test_benchmark_cli_rejects_colliding_outputs_without_writing(tmp_path) -> No
     assert not destination.exists()
 
 
-def test_benchmark_cli_stages_all_outputs_before_writing(tmp_path) -> None:
+def test_benchmark_cli_stages_all_outputs_and_creates_parent_directories(tmp_path) -> None:
     comparison = tmp_path / "comparison.json"
     missing_decision = tmp_path / "missing" / "decision.json"
     assert (
@@ -449,9 +449,10 @@ def test_benchmark_cli_stages_all_outputs_before_writing(tmp_path) -> None:
                 str(missing_decision),
             ]
         )
-        == 3
+        == 0
     )
-    assert not comparison.exists()
+    assert comparison.is_file()
+    assert missing_decision.is_file()
 
 
 def test_console_entrypoint_propagates_failure(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -36,7 +36,7 @@ def problem_data() -> dict[str, Any]:
 
 
 def make_problem():
-    return parse_problem(problem_data(), source_hash="fixture-hash", source_path="fixture.toml")
+    return parse_problem(problem_data(), source_hash="f" * 64, source_path="fixture.toml")
 
 
 def evaluator(point: Mapping[str, Scalar]) -> dict[str, float]:
