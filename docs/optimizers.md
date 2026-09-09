@@ -46,10 +46,21 @@ checked only between batches.
 
 A seed fixes algorithm randomness. Results are told in proposal order after worker threads finish, so worker count does
 not alter the sequence when the evaluator itself is deterministic and thread-safe. Batch size can alter adaptive
-feedback timing and is therefore part of a reproducible run specification.
+feedback timing and is therefore part of a reproducible run specification. Bit-exact replay additionally requires the
+same Python version, OS/libm, problem, evaluator, and effective hyperparameters. Python's [`math` module is mostly a
+thin wrapper around the platform C math library](https://docs.python.org/3/library/math.html), and only `random()` with a
+compatible seeder has an explicit cross-version sequence guarantee in Python's [reproducibility
+notes](https://docs.python.org/3/library/random.html#notes-on-reproducibility). A continuous logarithmic decode can
+therefore differ by a few binary64 ULPs across supported platforms even when its normalized random coordinates agree.
+
 `catalog-run.json` records the package version, strategy-schema version, and complete effective hyperparameters. The
-versioned `tests/data/optimizer-golden-v1.json` fixture pins all seven seeded point-key trajectories; changes require an
-intentional fixture review rather than silently redefining reproducibility.
+versioned `tests/data/optimizer-golden-v2.json` fixture pins all seven ordered seeded trajectories semantically: float
+coordinates and decoded float values have an explicit four-ULP ceiling, while scalar types, integers, choices,
+variable order, trial order, and lengths remain exact. Separate repeat and worker-count tests require bit-exact keys in
+one environment. A point key always hashes the exact decoded value map; values are never rounded for identity. Thus,
+two cross-platform points within the semantic ULP bound may intentionally have different keys, and an exact checkpoint
+may refuse a cross-environment resume rather than merge them. Fixture changes require intentional review rather than
+silently redefining reproducibility.
 
 ## CLI and API
 

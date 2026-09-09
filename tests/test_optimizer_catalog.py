@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import struct
 import threading
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,7 @@ from biasweave.benchmark import compare_optimizer_catalog, load_analog_benchmark
 from biasweave.cli import main
 from biasweave.demo import evaluate as demo_evaluator
 from biasweave.dominance import assess
-from biasweave.encoding import make_point
+from biasweave.encoding import make_point, point_key
 from biasweave.engine import optimize
 from biasweave.errors import CheckpointError, ConfigurationError, ProblemError
 from biasweave.model import RunConfig, Scalar, VariableKind
@@ -32,7 +33,32 @@ POPULATION_STRATEGIES = {
     StrategyName.NSGA2,
     StrategyName.MOEAD,
 }
+GOLDEN_FLOAT_ULPS = 4
 CONTRACT = Path("benchmarks/manifest.json")
+
+
+def _binary64_rank(value: float) -> int:
+    """Map finite binary64 values to adjacent integers, treating both zeros alike."""
+
+    bits = struct.unpack(">Q", struct.pack(">d", value))[0]
+    sign = 1 << 63
+    magnitude = bits & (sign - 1)
+    return sign - magnitude if bits & sign else sign + magnitude
+
+
+def _assert_golden_scalar(actual: Scalar, expected: object, *, context: str) -> None:
+    """Compare one semantic golden value without weakening exact value identity."""
+
+    assert type(actual) is type(expected), f"{context}: scalar type changed"
+    if isinstance(expected, float):
+        assert isinstance(actual, float)
+        assert math.isfinite(actual) and math.isfinite(expected), f"{context}: non-finite float"
+        distance = abs(_binary64_rank(actual) - _binary64_rank(expected))
+        assert distance <= GOLDEN_FLOAT_ULPS, f"{context}: exceeds 4 ULP"
+    else:
+        assert actual == expected, f"{context}: exact scalar changed"
+
+
 EXAMPLE = Path("examples/two_stage_ota/problem.toml")
 
 
@@ -268,25 +294,100 @@ def test_seeded_sequence_is_independent_of_worker_count(strategy) -> None:
     ]
 
 
-def test_seeded_catalog_trajectories_match_the_versioned_golden_fixture() -> None:
-    golden = json.loads(Path("tests/data/optimizer-golden-v1.json").read_text(encoding="utf-8"))
+def test_golden_scalar_comparison_is_finite_type_strict_and_bounded() -> None:
+    within = 1.0
+    for _ in range(GOLDEN_FLOAT_ULPS):
+        within = math.nextafter(within, math.inf)
+    _assert_golden_scalar(within, 1.0, context="four-ulp boundary")
+
+    outside = math.nextafter(within, math.inf)
+    with pytest.raises(AssertionError, match="exceeds 4 ULP"):
+        _assert_golden_scalar(outside, 1.0, context="five-ulp difference")
+    with pytest.raises(AssertionError, match="non-finite"):
+        _assert_golden_scalar(math.inf, 1.0, context="infinity")
+    with pytest.raises(AssertionError, match="type changed"):
+        _assert_golden_scalar(1, 1.0, context="integer substituted for real")
+
+    negative_within = -1.0
+    for _ in range(GOLDEN_FLOAT_ULPS):
+        negative_within = math.nextafter(negative_within, -math.inf)
+    _assert_golden_scalar(negative_within, -1.0, context="negative four-ulp boundary")
+    with pytest.raises(AssertionError, match="exceeds 4 ULP"):
+        _assert_golden_scalar(
+            math.nextafter(negative_within, -math.inf),
+            -1.0,
+            context="negative five-ulp difference",
+        )
+    _assert_golden_scalar(-0.0, 0.0, context="signed zero")
+
+
+def test_seeded_catalog_trajectories_match_the_versioned_semantic_golden_fixture() -> None:
+    golden = json.loads(Path("tests/data/optimizer-golden-v2.json").read_text(encoding="utf-8"))
+    assert list(golden) == [
+        "schema_version",
+        "float_ulp_tolerance",
+        "problem",
+        "seed",
+        "budget",
+        "batch_size",
+        "population_size",
+        "trajectories",
+    ]
+    assert golden["schema_version"] == 2
+    assert golden["float_ulp_tolerance"] == GOLDEN_FLOAT_ULPS
+    assert list(golden["trajectories"]) == [strategy.value for strategy in StrategyName]
     problem = load_problem(golden["problem"])
+    expected_variable_order = [variable.name for variable in problem.variables]
     for strategy in StrategyName:
-        result = optimize_strategy(
-            problem,
-            demo_evaluator,
-            evaluator_id="golden:demo-v1",
-            config=RunConfig(
-                golden["budget"], seed=golden["seed"], batch_size=golden["batch_size"]
-            ),
-            strategy=strategy,
-            population_size=(
+        config = RunConfig(golden["budget"], seed=golden["seed"], batch_size=golden["batch_size"])
+        arguments = {
+            "problem": problem,
+            "evaluator": demo_evaluator,
+            "evaluator_id": "golden:demo-v1",
+            "config": config,
+            "strategy": strategy,
+            "population_size": (
                 golden["population_size"] if strategy in POPULATION_STRATEGIES else None
             ),
-        )
-        assert [trial.point.key for trial in result.trials] == golden["trajectories"][
-            strategy.value
+        }
+        result = optimize_strategy(**arguments)
+        repeated = optimize_strategy(**arguments)
+        assert [trial.as_dict() for trial in repeated.trials] == [
+            trial.as_dict() for trial in result.trials
         ]
+
+        expected_points = golden["trajectories"][strategy.value]
+        assert len(result.trials) == len(expected_points) == golden["budget"]
+        local_keys: list[str] = []
+        for position, (trial, expected) in enumerate(
+            zip(result.trials, expected_points, strict=True)
+        ):
+            assert trial.trial_id == position
+            assert list(expected) == ["coordinates", "values"]
+            expected_coordinates = expected["coordinates"]
+            assert len(trial.point.coordinates) == len(expected_coordinates)
+            for dimension, (actual, reference) in enumerate(
+                zip(trial.point.coordinates, expected_coordinates, strict=True)
+            ):
+                _assert_golden_scalar(
+                    actual,
+                    reference,
+                    context=f"{strategy.value} trial {position} coordinate {dimension}",
+                )
+
+            expected_values = expected["values"]
+            assert list(trial.point.values) == expected_variable_order
+            assert list(expected_values) == expected_variable_order
+            for name in expected_variable_order:
+                _assert_golden_scalar(
+                    trial.point.values[name],
+                    expected_values[name],
+                    context=f"{strategy.value} trial {position} value {name}",
+                )
+
+            assert trial.point.key == point_key(trial.point.values)
+            local_keys.append(trial.point.key)
+        assert len(local_keys) == len(set(local_keys))
 
 
 def test_packaged_run_schemas_are_valid_draft_2020_12(tmp_path: Path) -> None:

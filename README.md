@@ -129,7 +129,8 @@ The problem digest, evaluator identifier, seed, and batch size must match the ch
 continuation under changed semantics. Checkpoint/resume currently applies to `weave`; catalog strategies write
 `catalog-run.json` and a complete ledger but start a fresh algorithm state on each run.
 Both run metadata formats carry package, strategy-schema, and effective-hyperparameter provenance; their Draft 2020-12
-schemas ship inside the wheel. A versioned golden fixture pins seeded trajectories for every catalog strategy.
+schemas ship inside the wheel. A versioned semantic golden fixture pins the ordered coordinates and decoded values for
+every catalog strategy with a strict binary64 ULP bound and exact discrete values.
 
 ## Problem format
 
@@ -413,8 +414,16 @@ result = optimize(
 ```
 
 The returned result exposes all trials and the feasible exact Pareto front. Parallel evaluators may finish in any order,
-but BiasWeave commits their results in trial-ID order. Determinism assumes the evaluator itself is deterministic and
-safe under the requested worker count.
+but BiasWeave commits their results in trial-ID order. Within one fixed Python version and OS/libm environment, repeated
+runs and worker-count changes are bit-exact when the problem, evaluator, seed, batch size, and effective hyperparameters
+match and the evaluator is deterministic and thread-safe. Across platforms, Python's
+[`math`](https://docs.python.org/3/library/math.html) functions may produce a few ULPs of difference for continuous
+transcendental calculations. BiasWeave's cross-platform golden tests bound that semantic difference to four binary64
+ULPs while keeping types, integer and choice values, dimensions, and order exact.
+
+Point keys deliberately hash the exact decoded value map and are never based on rounded physical values. Two
+cross-platform continuous points that satisfy the semantic ULP bound can therefore have different keys. Exact
+checkpoint validation may refuse a cross-environment resume instead of silently treating those points as identical.
 
 Every catalog strategy uses the same runner and result type:
 

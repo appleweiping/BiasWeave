@@ -212,7 +212,7 @@ def validate_distributions(directory: str | Path, version: str) -> tuple[Path, P
         "src/biasweave/dco.py",
         "src/biasweave/release_artifacts.py",
         "src/biasweave/release_gate.py",
-        "tests/data/optimizer-golden-v1.json",
+        "tests/data/optimizer-golden-v2.json",
         "tests/test_dco.py",
         "tests/test_release_artifacts.py",
         "tests/test_release_gate.py",

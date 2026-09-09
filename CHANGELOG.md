@@ -43,6 +43,10 @@
   canonical success or failure representation.
 - Remove repeated full seen-set copying; add a content-identified deduplication scaling harness, packaged run schemas,
   complete effective-hyperparameter provenance, and seven-strategy seeded golden trajectories.
+- Define seeded reproducibility at its actual numeric boundary: repeat and worker-count invariance remain bit-exact in
+  one Python/OS/libm environment, while the cross-platform semantic golden fixture permits at most four binary64 ULPs
+  for continuous coordinates and decoded values and keeps discrete values, types, shape, and order exact. Point keys
+  continue to bind exact, unrounded decoded values, so cross-environment checkpoint replay fails closed when they differ.
 - Move DCO checking to a trusted-base `pull_request_target` verifier bound before and after verification to the PR base,
   immutable head, commit count, and API commit list; base edits reset the head status to pending and final sign-offs must
   be valid trailers. Release gates authenticate the signed tag before source execution, require CI from the exact main
