@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -130,3 +132,60 @@ def test_dco_cli_reports_success_and_bad_anchors(tmp_path: Path, capsys) -> None
     assert main([str(source), "1", SHA2]) == 1
     assert "immutable pull-request head" in capsys.readouterr().err
     assert main([]) == 2
+
+
+def test_dco_standalone_success_without_site_packages(tmp_path: Path) -> None:
+    source = tmp_path / "commits.json"
+    source.write_text(json.dumps([[commit()]]), encoding="utf-8")
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            str(Path(dco_module.__file__).resolve()),
+            str(source),
+            "1",
+            SHA1,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert process.returncode == 0, process.stderr
+    assert "verified author-matching" in process.stdout
+
+
+@pytest.mark.parametrize(
+    "payload,message",
+    [
+        (b"[NaN]", "non-finite"),
+        (b"[1e309]", "non-finite"),
+        (b"[" + b"9" * 129 + b"]", "number length"),
+        (b"[0." + b"1" * 129 + b"]", "number length"),
+        (b"[" * 66 + b"0" + b"]" * 66, "complexity"),
+        (b"[" + b"0," * 250_000 + b"0]", "complexity"),
+        (b"\xff", "cannot read"),
+        (b"[", "cannot read"),
+    ],
+    ids=["nan", "overflow", "long-int", "long-float", "depth", "nodes", "utf8", "syntax"],
+)
+def test_standalone_json_reader_preserves_resource_and_numeric_gates(
+    payload: bytes, message: str, tmp_path: Path
+) -> None:
+    source = tmp_path / "commits.json"
+    source.write_bytes(payload)
+    with pytest.raises(DCOError, match=message):
+        verify_commit_file(source, expected_count=1, expected_head=SHA1)
+
+
+def test_standalone_json_reader_accepts_finite_unused_numbers_and_bounds_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "commits.json"
+    item = {**commit(), "unused_metadata": [1, 0.5]}
+    source.write_text(json.dumps([[item]]), encoding="utf-8")
+    assert verify_commit_file(source, expected_count=1, expected_head=SHA1) == 1
+    monkeypatch.setattr(dco_module, "_MAX_PAYLOAD_BYTES", 8)
+    with pytest.raises(DCOError, match="byte input limit"):
+        verify_commit_file(source, expected_count=1, expected_head=SHA1)

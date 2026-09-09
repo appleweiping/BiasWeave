@@ -29,8 +29,14 @@ Every pull-request commit must carry an author-matching Developer Certificate of
 Origin trailer. Use `git commit -s`. The `pull_request_target` DCO workflow runs
 only the verifier from the trusted base revision, requires the author-matching
 sign-off inside a syntactically valid final trailer block, and never executes
-pull-request code. It marks the event head pending, handles PR base edits, and
+pull-request code. Its bounded JSON reader uses only the standard library;
+tests disable site-packages so a local editable install cannot mask a missing
+dependency in the installation-free trusted workflow. It marks the event head
+pending, handles PR base edits, and
 binds the REST commit list to the event and final base repository/ref/SHA, head,
 and declared count before publishing success.
+Protected `main` requires the `DCO / commits` status from GitHub Actions in
+addition to its existing platform tests, lint and CodeQL checks. A passing
+ordinary test workflow does not replace this trusted-base sign-off check.
 Release tags are annotated SSH-signed tags and are verified against the signer
 policy on `main` before tag source or dependencies are executed.

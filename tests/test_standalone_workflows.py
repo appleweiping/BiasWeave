@@ -27,7 +27,10 @@ def test_actual_standalone_workflow_command_is_import_isolated(
     relative = f"src/biasweave/{script}"
     isolated = f"python -I {relative}" in body
     isolation = ["-I"] if isolated else []
-    command = [sys.executable, *isolation, str(root / relative), *arguments]
+    # The trusted-base DCO job and downstream release jobs do not install this
+    # package. Disable site-packages so an editable dev install cannot hide an
+    # accidental project dependency in a supposedly standalone helper.
+    command = [sys.executable, *isolation, "-S", str(root / relative), *arguments]
     result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=20)
     assert result.returncode == expected, result.stderr
     assert "usage:" in result.stdout + result.stderr

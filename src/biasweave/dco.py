@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import sys
 import unicodedata
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
-
-from biasweave._strict_json import (
-    JSONLimits,
-    StrictJSONError,
-    loads_strict_json,
-    read_limited_bytes,
-)
+from typing import Any, NoReturn
 
 _SIGNOFF = re.compile(
     r"^Signed-off-by:\s*(?P<name>[^<>\r\n]+?)\s*<(?P<email>[^<>\s]+)>\s*$",
@@ -24,16 +20,58 @@ _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 _MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
 _MAX_COMMITS = 250
 _MAX_TEXT_CHARACTERS = 262_144
-_DCO_JSON_LIMITS = JSONLimits(
-    max_bytes=_MAX_PAYLOAD_BYTES,
-    max_depth=64,
-    max_nodes=250_000,
-    max_number_characters=128,
-)
 
 
 class DCOError(ValueError):
     """Pull-request commit metadata violates the DCO gate."""
+
+
+def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DCOError(f"pull-request commit metadata contains duplicate key: {key}")
+        result[key] = value
+    return result
+
+
+def _constant(token: str) -> NoReturn:
+    raise DCOError(f"pull-request commit metadata contains non-finite number: {token}")
+
+
+def _integer(token: str) -> int:
+    if len(token) > 128:
+        raise DCOError("pull-request commit metadata number length exceeds 128 characters")
+    return int(token)
+
+
+def _floating(token: str) -> float:
+    if len(token) > 128:
+        raise DCOError("pull-request commit metadata number length exceeds 128 characters")
+    value = float(token)
+    if not math.isfinite(value):
+        return _constant(token)
+    return value
+
+
+def _complexity(value: Any) -> None:
+    # Keep auxiliary state proportional to depth, not the widest API array.
+    frames: list[tuple[Iterator[Any], int]] = [(iter((value,)), 0)]
+    count = 0
+    while frames:
+        items, depth = frames[-1]
+        try:
+            item = next(items)
+        except StopIteration:
+            frames.pop()
+            continue
+        count += 1
+        if depth > 64 or count > 250_000:
+            raise DCOError("pull-request commit metadata exceeds JSON complexity limits")
+        if isinstance(item, dict):
+            frames.append((iter(item.values()), depth + 1))
+        elif isinstance(item, list):
+            frames.append((iter(item), depth + 1))
 
 
 def _text(value: Any, label: str) -> str:
@@ -140,17 +178,21 @@ def verify_commit_file(
     try:
         if source.is_symlink() or not source.is_file():
             raise DCOError("pull-request commit metadata is not a regular file")
-        payload = read_limited_bytes(
-            source,
-            max_bytes=_MAX_PAYLOAD_BYTES,
-            context="pull-request commit metadata",
+        with source.open("rb") as stream:
+            payload = stream.read(_MAX_PAYLOAD_BYTES + 1)
+        if len(payload) > _MAX_PAYLOAD_BYTES:
+            raise DCOError("pull-request commit metadata exceeds the byte input limit")
+        pages = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_pairs,
+            parse_constant=_constant,
+            parse_int=_integer,
+            parse_float=_floating,
         )
-        pages = loads_strict_json(
-            payload,
-            limits=_DCO_JSON_LIMITS,
-            context="pull-request commit metadata",
-        )
-    except (OSError, StrictJSONError) as error:
+        _complexity(pages)
+    except DCOError:
+        raise
+    except (OSError, UnicodeError, ValueError, RecursionError, OverflowError) as error:
         raise DCOError(f"cannot read pull-request commit metadata: {error}") from error
     return verify_commit_pages(
         pages,
@@ -165,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 3:
         print(
-            "usage: python -m biasweave.dco PULL_COMMITS.json EXPECTED_COUNT EXPECTED_HEAD",
+            "usage: python -I dco.py PULL_COMMITS.json EXPECTED_COUNT EXPECTED_HEAD",
             file=sys.stderr,
         )
         return 2

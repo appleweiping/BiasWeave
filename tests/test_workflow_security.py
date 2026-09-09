@@ -47,6 +47,7 @@ def test_dco_runs_only_the_trusted_base_verifier() -> None:
     assert "ref: ${{ github.event.pull_request.head.sha }}" not in dco
     assert "git rev-list" not in ci
     assert "Signed-off-by:" not in ci
+    assert "DCO / commits" in Path("CONTRIBUTING.md").read_text(encoding="utf-8")
 
 
 def test_release_authenticates_source_before_any_source_execution() -> None:
