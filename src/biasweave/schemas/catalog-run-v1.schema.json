@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/appleweiping/BiasWeave/schemas/catalog-run-v1.schema.json",
+  "title": "BiasWeave catalog run provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "package_version", "strategy_schema_version", "problem_sha256",
+    "evaluator_id", "strategy", "strategy_parameters", "population_size", "seed", "budget",
+    "batch_size", "workers", "max_stagnation", "wall_time_seconds", "command_timeout_seconds",
+    "completed_trials", "stop_reason"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "package_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "strategy_schema_version": {"const": 1},
+    "problem_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "evaluator_id": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "strategy": {"enum": ["weave", "random", "sa", "pso", "de", "nsga2", "moead"]},
+    "strategy_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 4,
+      "properties": {
+        "population_size": {"type": "integer", "minimum": 4, "maximum": 512},
+        "initial_temperature": {"type": "number", "exclusiveMinimum": 0},
+        "cooling": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "minimum_temperature": {"type": "number", "exclusiveMinimum": 0},
+        "inertia": {"type": "number", "minimum": 0},
+        "cognitive": {"type": "number", "minimum": 0},
+        "social": {"type": "number", "minimum": 0},
+        "differential_weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 2},
+        "crossover_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "crossover_probability": {"type": "number", "minimum": 0, "maximum": 1},
+        "crossover_eta": {"type": "number", "exclusiveMinimum": 0},
+        "mutation_eta": {"type": "number", "exclusiveMinimum": 0},
+        "neighborhood_size": {"type": "integer", "minimum": 4, "maximum": 512}
+      }
+    },
+    "population_size": {"type": ["integer", "null"], "minimum": 4, "maximum": 512},
+    "seed": {"type": "integer"},
+    "budget": {"type": "integer", "minimum": 1},
+    "batch_size": {"type": "integer", "minimum": 1},
+    "workers": {"type": "integer", "minimum": 1},
+    "max_stagnation": {"type": "integer", "minimum": 0},
+    "wall_time_seconds": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "command_timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+    "completed_trials": {"type": "integer", "minimum": 0},
+    "stop_reason": {"enum": ["budget", "wall_time", "stagnation", "search_space_exhausted", "proposal_stalled"]}
+  }
+}

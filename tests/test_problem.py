@@ -157,6 +157,14 @@ def test_rejects_empty_variables_and_too_few_or_duplicate_objectives():
         parse_problem(data)
 
 
+def test_rejects_variable_names_that_collide_after_trimming() -> None:
+    data = problem_data()
+    data["variables"][" x "] = {"kind": "integer", "low": 0, "high": 2}
+
+    with pytest.raises(ProblemError, match="variable names.*unique after trimming"):
+        parse_problem(data)
+
+
 @pytest.mark.parametrize(
     ("constraint", "message"),
     [

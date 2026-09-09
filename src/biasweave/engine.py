@@ -6,23 +6,36 @@ import hashlib
 import json
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from biasweave._failure import evaluator_failure
+from biasweave._output import WriterClaim, atomic_write_many, preflight_outputs
+from biasweave._version import __version__
 from biasweave.archive import Archive
 from biasweave.dominance import assess, failed_trial
 from biasweave.encoding import make_point
 from biasweave.errors import CheckpointError, ConfigurationError
 from biasweave.evaluator import validate_metrics
-from biasweave.ledger import TrialLedger, read_metadata, write_metadata
-from biasweave.model import OptimizationResult, Point, Problem, RunConfig, Scalar, Trial
+from biasweave.ledger import TrialLedger, metadata_bytes, read_metadata, write_metadata
+from biasweave.model import (
+    OptimizationResult,
+    Point,
+    Problem,
+    RunConfig,
+    Scalar,
+    Trial,
+    TrialStatus,
+)
 from biasweave.proposal import ProposalGenerator
-from biasweave.results import write_result
+from biasweave.results import result_outputs, write_result
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+_STRATEGY_SCHEMA_VERSION = 1
+_MAX_SEED_DIGITS = 128
 
 
 def validate_run_config(config: RunConfig) -> None:
@@ -31,6 +44,8 @@ def validate_run_config(config: RunConfig) -> None:
         raise ConfigurationError("budget must be a positive integer")
     if isinstance(config.seed, bool) or not isinstance(config.seed, int):
         raise ConfigurationError("seed must be an integer")
+    if len(str(abs(config.seed))) > _MAX_SEED_DIGITS:
+        raise ConfigurationError(f"seed must be at most {_MAX_SEED_DIGITS} digits")
     if (
         isinstance(config.workers, bool)
         or not isinstance(config.workers, int)
@@ -82,6 +97,10 @@ def _metadata(
 ) -> dict[str, Any]:
     return {
         "schema_version": _SCHEMA_VERSION,
+        "package_version": __version__,
+        "strategy": "weave",
+        "strategy_schema_version": _STRATEGY_SCHEMA_VERSION,
+        "strategy_parameters": {},
         "problem_sha256": problem_hash,
         "evaluator_id": evaluator_id,
         "seed": config.seed,
@@ -104,6 +123,10 @@ def _require_metadata(
 ) -> tuple[int, int, Mapping[str, Any], list[int], list[str]]:
     expected_fields = {
         "schema_version",
+        "package_version",
+        "strategy",
+        "strategy_schema_version",
+        "strategy_parameters",
         "problem_sha256",
         "evaluator_id",
         "seed",
@@ -124,6 +147,10 @@ def _require_metadata(
     ):
         raise CheckpointError("unsupported run metadata schema")
     expected = {
+        "package_version": __version__,
+        "strategy": "weave",
+        "strategy_schema_version": _STRATEGY_SCHEMA_VERSION,
+        "strategy_parameters": {},
         "problem_sha256": problem_hash,
         "evaluator_id": evaluator_id,
         "seed": config.seed,
@@ -169,16 +196,14 @@ def _replay_ledger_tail(
 ) -> tuple[int, list[Point], bool]:
     """Recover a durable ledger batch written just before its metadata snapshot."""
     archive = Archive(problem, trials[:completed])
-    seen = {trial.point.key for trial in trials[:completed]}
     signature = archive.signature
-    expected = generator.propose(proposed_count, archive, tuple(trials[:completed]), seen)
+    expected = generator.propose(proposed_count, archive, tuple(trials[:completed]), set())
     actual = trials[completed:]
     if len(actual) > len(expected) or [point.key for point in expected[: len(actual)]] != [
         trial.point.key for trial in actual
     ]:
         raise CheckpointError("checkpoint metadata and ledger disagree; tail cannot be replayed")
     for trial in actual:
-        seen.add(trial.point.key)
         archive.add(trial)
     if len(actual) == len(expected):
         grew = archive.signature != signature
@@ -196,18 +221,16 @@ def _reconstruct_generator(
 ) -> tuple[ProposalGenerator, int]:
     generator = ProposalGenerator(problem, seed)
     archive = Archive(problem)
-    seen: set[str] = set()
     stagnation = 0
     cursor = 0
     for end in batch_ends:
         count = end - cursor
         signature = archive.signature
-        expected = generator.propose(count, archive, tuple(trials[:cursor]), seen)
+        expected = generator.propose(count, archive, tuple(trials[:cursor]), set())
         actual = trials[cursor : cursor + count]
         if [point.key for point in expected] != [trial.point.key for trial in actual]:
             raise CheckpointError("checkpoint trial sequence is not reproducible")
         for trial in actual:
-            seen.add(trial.point.key)
             archive.add(trial)
         grew = archive.signature != signature
         generator.observe(grew)
@@ -225,13 +248,11 @@ def _evaluate_one(
     point: Point,
 ) -> Trial:
     try:
-        raw = evaluator(point.values)
+        raw = evaluator(dict(point.values))
         metrics = validate_metrics(problem, raw)
         return assess(problem, trial_id, point, metrics)
     except Exception as error:  # Evaluator boundaries must preserve the remaining run.
-        name = type(error).__name__
-        detail = str(error).strip()
-        return failed_trial(trial_id, point, f"{name}: {detail}" if detail else name)
+        return failed_trial(trial_id, point, evaluator_failure(error))
 
 
 def _evaluate_batch(
@@ -271,25 +292,23 @@ def validate_checkpoint_trials(problem: Problem, trials: list[Trial]) -> None:
             raise CheckpointError(f"trial {trial.trial_id} cannot be decoded: {error}") from error
         if decoded.key != trial.point.key or decoded.values != trial.point.values:
             raise CheckpointError(f"trial {trial.trial_id} point identity is inconsistent")
-        if trial.status.value == "failed":
-            if trial.metrics or trial.objective_vector or trial.feasible:
-                raise CheckpointError(f"failed trial {trial.trial_id} contains success data")
+        if trial.status is TrialStatus.FAILED:
+            if not isinstance(trial.error, str) or not trial.error.strip():
+                raise CheckpointError(f"failed trial {trial.trial_id} is not canonical")
+            expected_failure = failed_trial(trial.trial_id, trial.point, trial.error)
+            if trial != expected_failure:
+                raise CheckpointError(f"failed trial {trial.trial_id} is not canonical")
             continue
         try:
             metrics = validate_metrics(problem, trial.metrics)
             expected = assess(problem, trial.trial_id, trial.point, metrics)
         except Exception as error:
             raise CheckpointError(f"trial {trial.trial_id} metrics are invalid: {error}") from error
-        if (
-            trial.feasible != expected.feasible
-            or trial.violation != expected.violation
-            or trial.max_violation != expected.max_violation
-            or trial.objective_vector != expected.objective_vector
-        ):
-            raise CheckpointError(f"trial {trial.trial_id} assessment is inconsistent")
+        if trial != expected:
+            raise CheckpointError(f"trial {trial.trial_id} assessment is not canonical")
 
 
-def optimize(
+def _optimize_coordinated(
     problem: Problem,
     evaluator: Callable[[Mapping[str, Scalar]], Mapping[str, float]],
     *,
@@ -298,6 +317,9 @@ def optimize(
     output_directory: str | Path | None = None,
     resume: bool = False,
     clock: Callable[[], float] = time.monotonic,
+    force: bool = False,
+    protected_paths: Iterable[str | Path] = (),
+    _claim: WriterClaim | None = None,
 ) -> OptimizationResult:
     """Search a problem and optionally persist an exactly resumable run.
 
@@ -305,8 +327,8 @@ def optimize(
     other BaseException subclasses are deliberately not swallowed.
     """
     validate_run_config(config)
-    if not isinstance(evaluator_id, str) or not evaluator_id.strip():
-        raise ConfigurationError("evaluator_id must be a non-empty string")
+    if not isinstance(evaluator_id, str) or not evaluator_id.strip() or len(evaluator_id) > 4_096:
+        raise ConfigurationError("evaluator_id must be a bounded non-empty string")
     problem_hash = problem_fingerprint(problem)
     generator = ProposalGenerator(problem, config.seed)
     trials: list[Trial] = []
@@ -316,6 +338,7 @@ def optimize(
     pending_points: list[Point] = []
     pending_batch_start: int | None = None
     batch_ends: list[int] = []
+    protected = tuple(protected_paths) + ((problem.source_path,) if problem.source_path else ())
 
     if resume and output_directory is None:
         raise ConfigurationError("resume requires an output directory")
@@ -323,7 +346,14 @@ def optimize(
         directory = Path(output_directory)
         ledger_path, metadata_path = _checkpoint_paths(directory)
         ledger = TrialLedger(ledger_path)
+        artifacts = (
+            ledger_path,
+            metadata_path,
+            directory / "frontier.json",
+            directory / "summary.md",
+        )
         if resume:
+            preflight_outputs(artifacts, force=True, protected=protected)
             if not metadata_path.is_file():
                 raise CheckpointError(f"checkpoint metadata does not exist: {metadata_path}")
             trials = ledger.read()
@@ -343,12 +373,11 @@ def optimize(
             )
             if recorded_pending:
                 prior_archive = Archive(problem, trials[:completed])
-                prior_seen = {trial.point.key for trial in trials[:completed]}
                 proposed = generator.propose(
                     len(recorded_pending),
                     prior_archive,
                     tuple(trials[:completed]),
-                    prior_seen,
+                    set(),
                 )
                 if [point.key for point in proposed] != recorded_pending:
                     raise CheckpointError("checkpoint pending batch is not reproducible")
@@ -390,6 +419,9 @@ def optimize(
                             generator,
                             batch_ends,
                         ),
+                        force=True,
+                        protected=protected,
+                        _claim=_claim,
                     )
             elif completed < len(trials):
                 proposed_count = min(config.batch_size, config.budget - completed)
@@ -416,21 +448,39 @@ def optimize(
                             generator,
                             batch_ends,
                         ),
+                        force=True,
+                        protected=protected,
+                        _claim=_claim,
                     )
             if config.budget < len(trials):
                 raise ConfigurationError("budget cannot be less than completed trials")
-        elif ledger_path.exists() or metadata_path.exists():
-            raise CheckpointError(
-                f"output directory already contains a checkpoint: {directory}; use resume"
-            )
         else:
-            write_metadata(
-                metadata_path,
-                _metadata(problem_hash, evaluator_id, config, 0, stagnation, generator, batch_ends),
+            preflight_outputs(artifacts, force=force, protected=protected)
+            initial = _metadata(
+                problem_hash, evaluator_id, config, 0, stagnation, generator, batch_ends
+            )
+            initial_results = result_outputs(
+                OptimizationResult(
+                    problem,
+                    (),
+                    (),
+                    "in_progress",
+                    evaluator_id,
+                    config.seed,
+                ),
+                directory,
+            )
+            atomic_write_many(
+                (
+                    (ledger_path, b""),
+                    (metadata_path, metadata_bytes(initial)),
+                    *initial_results,
+                ),
+                force=force,
+                protected=protected,
             )
 
     archive = Archive(problem, trials)
-    seen = {trial.point.key for trial in trials}
     start = clock()
     stop_reason = "budget"
 
@@ -441,14 +491,13 @@ def optimize(
         batch = _evaluate_batch(problem, evaluator, len(trials), pending_points, config.workers)
         for trial in batch:
             trials.append(trial)
-            seen.add(trial.point.key)
             archive.add(trial)
         grew = archive.signature != before
         generator.observe(grew)
         stagnation = 0 if grew else stagnation + len(trials) - pending_batch_start
         batch_ends.append(len(trials))
         if ledger is not None and metadata_path is not None:
-            ledger.append(batch)
+            ledger.append(batch, protected=protected, _claim=_claim)
             write_metadata(
                 metadata_path,
                 _metadata(
@@ -460,6 +509,9 @@ def optimize(
                     generator,
                     batch_ends,
                 ),
+                force=True,
+                protected=protected,
+                _claim=_claim,
             )
 
     while len(trials) < config.budget:
@@ -470,9 +522,9 @@ def optimize(
             stop_reason = "stagnation"
             break
         remaining = config.budget - len(trials)
-        points = generator.propose(min(config.batch_size, remaining), archive, tuple(trials), seen)
+        points = generator.propose(min(config.batch_size, remaining), archive, tuple(trials), set())
         if not points:
-            stop_reason = "search_space_exhausted"
+            stop_reason = generator.empty_reason or "proposal_stalled"
             break
         if metadata_path is not None:
             write_metadata(
@@ -487,19 +539,21 @@ def optimize(
                     batch_ends,
                     [point.key for point in points],
                 ),
+                force=True,
+                protected=protected,
+                _claim=_claim,
             )
         signature = archive.signature
         batch = _evaluate_batch(problem, evaluator, len(trials), points, config.workers)
         for trial in batch:
             trials.append(trial)
-            seen.add(trial.point.key)
             archive.add(trial)
         frontier_grew = archive.signature != signature
         generator.observe(frontier_grew)
         stagnation = 0 if frontier_grew else stagnation + len(batch)
         batch_ends.append(len(trials))
         if ledger is not None and metadata_path is not None:
-            ledger.append(batch)
+            ledger.append(batch, protected=protected, _claim=_claim)
             write_metadata(
                 metadata_path,
                 _metadata(
@@ -511,6 +565,9 @@ def optimize(
                     generator,
                     batch_ends,
                 ),
+                force=True,
+                protected=protected,
+                _claim=_claim,
             )
 
     result = OptimizationResult(
@@ -522,5 +579,55 @@ def optimize(
         config.seed,
     )
     if output_directory is not None:
-        write_result(result, output_directory)
+        write_result(
+            result,
+            output_directory,
+            # A fresh persisted run installs an atomic in-progress generation
+            # before evaluation starts. These two files are therefore always
+            # an internal checkpoint transition at completion, even when the
+            # public fresh-run preflight was no-clobber.
+            force=True,
+            protected=protected,
+        )
     return result
+
+
+def optimize(
+    problem: Problem,
+    evaluator: Callable[[Mapping[str, Scalar]], Mapping[str, float]],
+    *,
+    evaluator_id: str,
+    config: RunConfig,
+    output_directory: str | Path | None = None,
+    resume: bool = False,
+    clock: Callable[[], float] = time.monotonic,
+    force: bool = False,
+    protected_paths: Iterable[str | Path] = (),
+) -> OptimizationResult:
+    """Search a problem, coordinating every durable run transition."""
+
+    if output_directory is None:
+        return _optimize_coordinated(
+            problem,
+            evaluator,
+            evaluator_id=evaluator_id,
+            config=config,
+            output_directory=None,
+            resume=resume,
+            clock=clock,
+            force=force,
+            protected_paths=protected_paths,
+        )
+    with WriterClaim(Path(output_directory)) as claim:
+        return _optimize_coordinated(
+            problem,
+            evaluator,
+            evaluator_id=evaluator_id,
+            config=config,
+            output_directory=output_directory,
+            resume=resume,
+            clock=clock,
+            force=force,
+            protected_paths=protected_paths,
+            _claim=claim,
+        )

@@ -26,7 +26,9 @@ from biasweave.engine import optimize
 from biasweave.errors import ProblemError
 from biasweave.evaluator import validate_metrics
 from biasweave.model import OptimizationResult, Problem, RunConfig, Scalar, Trial
+from biasweave.optimizers import StrategyName
 from biasweave.problem import parse_problem
+from biasweave.strategy import optimize_strategy
 
 _SCHEMA = "org.topology-lantern.analog-sizing-benchmark"
 _MODEL = "deterministic-analytic-proxy-v1"
@@ -388,6 +390,62 @@ def compare_with_random(benchmark: AnalogBenchmark, *, budget: int, seed: int) -
             "uniform_random_search": _summary(tuple(random_trials), benchmark.problem),
         },
         "interpretation": "Descriptive same-budget comparison; no statistical or state-of-the-art claim.",
+    }
+    body["comparison_sha256"] = _canonical_digest(body)
+    return body
+
+
+def compare_optimizer_catalog(
+    benchmark: AnalogBenchmark,
+    *,
+    budget: int,
+    seed: int,
+    population_size: int = 16,
+) -> dict[str, Any]:
+    """Run every catalog strategy against one contract and exact budget.
+
+    This is a descriptive reproducibility harness, not a statistical ranking:
+    each algorithm gets one run and the same evaluation count. For a comparative
+    study, callers should repeat it over a declared seed set.
+    """
+    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 4:
+        raise ProblemError("catalog benchmark budget must be an integer of at least 4")
+    if isinstance(seed, bool) or not isinstance(seed, int) or not _MIN_SEED <= seed <= _MAX_SEED:
+        raise ProblemError("benchmark seed must be a signed 64-bit integer")
+    if (
+        isinstance(population_size, bool)
+        or not isinstance(population_size, int)
+        or not 4 <= population_size <= budget
+    ):
+        raise ProblemError("population_size must be in [4, budget]")
+    algorithms: dict[str, Any] = {}
+    population_strategies = {
+        StrategyName.PSO,
+        StrategyName.DE,
+        StrategyName.NSGA2,
+        StrategyName.MOEAD,
+    }
+    for strategy in StrategyName:
+        result = optimize_strategy(
+            benchmark.problem,
+            benchmark.evaluate,
+            evaluator_id=f"analytic:{benchmark.contract_sha256}",
+            config=RunConfig(budget, seed=seed, batch_size=min(8, budget)),
+            strategy=strategy,
+            population_size=population_size if strategy in population_strategies else None,
+        )
+        algorithms[strategy.value] = _summary(result.trials, benchmark.problem)
+    body: dict[str, Any] = {
+        "schema": "org.biasweave.optimizer-catalog-benchmark",
+        "version": 1,
+        "contract_sha256": benchmark.contract_sha256,
+        "budget_per_strategy": budget,
+        "seed": seed,
+        "population_size": population_size,
+        "algorithms": algorithms,
+        "interpretation": (
+            "One deterministic run per strategy; descriptive only, not a statistical ranking."
+        ),
     }
     body["comparison_sha256"] = _canonical_digest(body)
     return body

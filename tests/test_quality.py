@@ -9,7 +9,7 @@ import random
 import pytest
 
 from biasweave.errors import ConfigurationError
-from biasweave.model import Point, Trial, TrialStatus
+from biasweave.model import OptimizationResult, Point, Trial, TrialStatus
 from biasweave.quality import (
     BASE_RECURSIVE_FRONT,
     DEFAULT_REFERENCE_MARGIN,
@@ -26,6 +26,7 @@ from biasweave.quality import (
     recursive_front_limit,
     spacing,
 )
+from biasweave.results import result_data
 from tests.helpers import make_problem
 
 
@@ -201,6 +202,33 @@ def test_a_bad_margin_is_refused(margin: float) -> None:
 def test_a_reference_cannot_be_derived_from_nothing() -> None:
     with pytest.raises(ConfigurationError, match="no vectors"):
         derive_reference_point([])
+
+
+def test_extreme_finite_reference_and_spacing_fail_closed_instead_of_inf_or_nan() -> None:
+    extreme = [(1e308, -1e308), (-1e308, 1e308)]
+
+    reference = derive_reference_point(extreme)
+    assert all(math.isfinite(value) and value > 1e308 for value in reference)
+    with pytest.raises(ConfigurationError, match="spacing exceeds"):
+        spacing(extreme)
+    with pytest.raises(ConfigurationError, match="hypervolume exceeds"):
+        hypervolume([(-1e308, -1e308)], (1e308, 1e308))
+    with pytest.raises(ConfigurationError, match="epsilon indicator exceeds"):
+        epsilon_indicator([(1e308, 1e308)], [(-1e308, -1e308)])
+
+
+def test_unrepresentable_quality_remains_null_in_run_output() -> None:
+    problem = make_problem()
+    extreme_trials = tuple(trials((1e308, -1e308), (-1e308, 1e308)))
+    result = OptimizationResult(
+        problem,
+        extreme_trials,
+        extreme_trials,
+        "budget",
+        "tests:extreme-quality",
+        0,
+    )
+    assert result_data(result)["quality"] is None
 
 
 # ---------------------------------------------------------------------------

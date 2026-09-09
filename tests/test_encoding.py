@@ -96,3 +96,150 @@ def test_constant_integer_range_decodes_without_division():
     values = decode(problem, default_coordinates(problem))
     assert values["n"] == 3
     assert encode(problem, values)[1] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("low", [2**53, -(2**60)])
+def test_large_integer_three_value_domain_round_trips_exactly(low: int) -> None:
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {
+                "x": {"kind": "integer", "low": low, "high": low + 2, "default": low + 1}
+            },
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+    for value in range(low, low + 3):
+        coordinate = encode(problem, {"x": value})
+        assert decode(problem, coordinate)["x"] == value
+
+
+def test_wide_integer_encoding_refuses_silent_float_coordinate_alias() -> None:
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": {"kind": "integer", "low": 0, "high": 2**60}},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+
+    defaults = default_coordinates(problem)
+    assert defaults == (0.5,)
+    assert decode(problem, defaults)["x"] == 2**59
+    low_endpoint = encode(problem, {"x": 0})
+    assert low_endpoint == (0.0,)
+    assert decode(problem, low_endpoint)["x"] == 0
+    with pytest.raises(ProblemError, match="cannot be represented exactly"):
+        encode(problem, {"x": 2**60 - 1})
+    endpoint = encode(problem, {"x": 2**60})
+    assert endpoint == (1.0,)
+    assert decode(problem, endpoint)["x"] == 2**60
+
+
+@pytest.mark.parametrize(
+    ("variable", "expected_default"),
+    [
+        ({"kind": "real", "low": -1e308, "high": 1e308}, 0.0),
+        ({"kind": "real", "low": 1e200, "high": 1e300, "scale": "log"}, 1e250),
+    ],
+)
+def test_extreme_finite_real_defaults_round_trip_without_intermediate_overflow(
+    variable: dict[str, object], expected_default: float
+) -> None:
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": variable},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+
+    coordinates = default_coordinates(problem)
+    assert coordinates == pytest.approx((0.5,))
+    assert decode(problem, coordinates)["x"] == pytest.approx(expected_default)
+
+
+def test_extreme_finite_linear_real_endpoints_and_center_round_trip() -> None:
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": {"kind": "real", "low": -1e308, "high": 1e308}},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+
+    for value, coordinate in ((-1e308, 0.0), (0.0, 0.5), (1e308, 1.0)):
+        encoded = encode(problem, {"x": value})
+        assert encoded == pytest.approx((coordinate,))
+        assert decode(problem, encoded)["x"] == value
+
+
+@pytest.mark.parametrize("low", [1e-200, 1e200, 1e308])
+def test_ulp_narrow_log_real_endpoints_defaults_and_interior_round_trip(low: float) -> None:
+    values = [low]
+    for _ in range(8):
+        values.append(math.nextafter(values[-1], math.inf))
+    high = values[-1]
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": {"kind": "real", "low": low, "high": high, "scale": "log"}},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+
+    default = problem.free_variables[0].default
+    assert isinstance(default, float)
+    assert low <= default <= high
+    assert decode(problem, default_coordinates(problem))["x"] == default
+    for value in (values[0], values[3], values[5], values[8]):
+        coordinate = encode(problem, {"x": value})
+        assert 0.0 <= coordinate[0] <= 1.0
+        assert decode(problem, coordinate)["x"] == value
+
+
+@pytest.mark.parametrize("low", [1e-200, 1e200, 1e308])
+def test_ulp_narrow_log_explicit_lower_endpoint_encodes_to_zero(low: float) -> None:
+    high = math.nextafter(math.nextafter(low, math.inf), math.inf)
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {
+                "x": {
+                    "kind": "real",
+                    "low": low,
+                    "high": high,
+                    "scale": "log",
+                    "default": low,
+                }
+            },
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+
+    assert default_coordinates(problem) == (0.0,)
+    assert decode(problem, (0.0,))["x"] == low

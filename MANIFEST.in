@@ -1,11 +1,14 @@
 include CHANGELOG.md
 include CITATION.cff
+include .github/allowed_signers
 include CODE_OF_CONDUCT.md
 include CONTRIBUTING.md
 include LICENSE
 include README.md
 include SECURITY.md
+include uv.lock
+recursive-include .github/workflows *.yml
 recursive-include docs *.json *.md *.svg
 recursive-include examples *.md *.toml
 recursive-include benchmarks *.json *.md *.py
-recursive-include tests *.py
+recursive-include tests *.py *.json

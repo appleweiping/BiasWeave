@@ -5,24 +5,30 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import sys
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from biasweave._output import atomic_write_many, paths_alias, utf8
 from biasweave._strict_json import JSONLimits, StrictJSONError, loads_strict_json
 from biasweave._version import __version__
 from biasweave.archive import Archive
-from biasweave.benchmark import compare_with_random, load_analog_benchmark, sizing_decision
+from biasweave.benchmark import (
+    compare_optimizer_catalog,
+    compare_with_random,
+    load_analog_benchmark,
+    sizing_decision,
+)
 from biasweave.engine import optimize, validate_checkpoint_trials
 from biasweave.errors import BiasWeaveError, ConfigurationError
 from biasweave.evaluator import CommandEvaluator, load_python_evaluator
 from biasweave.ledger import TrialLedger, read_metadata
 from biasweave.model import Problem, RunConfig, Scalar, Trial
+from biasweave.optimizers import StrategyName
 from biasweave.problem import load_problem
 from biasweave.quality import measure_run
 from biasweave.results import attainment_lines, comparison_lines, frontier_table, quality_lines
+from biasweave.strategy import optimize_strategy
 
 _COMMAND_JSON_LIMITS = JSONLimits(
     max_bytes=65_536,
@@ -97,6 +103,21 @@ def _add_run_options(parser: argparse.ArgumentParser, *, resume: bool) -> None:
     parser.add_argument("--max-stagnation", type=_non_negative, default=0)
     parser.add_argument("--wall-time", type=float)
     parser.add_argument("--command-timeout", type=float, default=300.0)
+    if not resume:
+        parser.add_argument(
+            "--strategy",
+            choices=tuple(strategy.value for strategy in StrategyName),
+            default=StrategyName.WEAVE.value,
+            help="independent search strategy (default: weave)",
+        )
+        parser.add_argument(
+            "--population-size",
+            type=_positive,
+            help="population for pso, de, nsga2, or moead (default: 16)",
+        )
+        parser.add_argument(
+            "--force", action="store_true", help="replace existing outputs, never input aliases"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,16 +167,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--curve", action="store_true", help="report hypervolume against evaluations spent"
     )
     quality.add_argument("--output", type=Path, help="write JSON instead of text")
+    quality.add_argument("--force", action="store_true", help="replace an existing output")
 
     benchmark = commands.add_parser("benchmark", help="run an analog contract comparison")
     benchmark.add_argument("--contract", required=True, type=Path)
     benchmark.add_argument("--budget", required=True, type=_positive)
     benchmark.add_argument("--seed", type=int, default=0)
     benchmark.add_argument("--output", type=Path)
+    benchmark.add_argument("--force", action="store_true", help="replace existing outputs")
     benchmark.add_argument(
         "--decision-output",
         type=Path,
         help="write the content-bound BiasWeave representative for downstream simulation",
+    )
+
+    catalog_benchmark = commands.add_parser(
+        "catalog-benchmark", help="run every optimizer against one analog contract"
+    )
+    catalog_benchmark.add_argument("--contract", required=True, type=Path)
+    catalog_benchmark.add_argument("--budget", required=True, type=_positive)
+    catalog_benchmark.add_argument("--seed", type=int, default=0)
+    catalog_benchmark.add_argument("--population-size", type=_positive, default=16)
+    catalog_benchmark.add_argument("--output", type=Path)
+    catalog_benchmark.add_argument(
+        "--force", action="store_true", help="replace an existing output"
     )
     return parser
 
@@ -183,16 +218,36 @@ def _run(arguments: argparse.Namespace, *, resume: bool) -> int:
         budget = completed + arguments.additional_budget
     else:
         budget = arguments.budget
-    result = optimize(
-        problem,
-        evaluator,
-        evaluator_id=arguments.evaluator,
-        config=_config(arguments, budget),
-        output_directory=arguments.out,
-        resume=resume,
-    )
+    config = _config(arguments, budget)
+    strategy = StrategyName.WEAVE if resume else StrategyName(arguments.strategy)
+    if strategy is StrategyName.WEAVE:
+        if not resume and arguments.population_size is not None:
+            raise ConfigurationError("--population-size does not apply to weave")
+        result = optimize(
+            problem,
+            evaluator,
+            evaluator_id=arguments.evaluator,
+            config=config,
+            output_directory=arguments.out,
+            resume=resume,
+            force=False if resume else arguments.force,
+            protected_paths=(arguments.problem,),
+        )
+    else:
+        result = optimize_strategy(
+            problem,
+            evaluator,
+            evaluator_id=arguments.evaluator,
+            config=config,
+            strategy=strategy,
+            population_size=arguments.population_size,
+            output_directory=arguments.out,
+            force=arguments.force,
+            protected_paths=(arguments.problem,),
+        )
+    prefix = "" if strategy is StrategyName.WEAVE else f"{strategy.value}: "
     print(
-        f"{result.stop_reason}: {len(result.trials)} evaluations, "
+        f"{prefix}{result.stop_reason}: {len(result.trials)} evaluations, "
         f"{len(result.frontier)} feasible Pareto points, {result.failed_trials} failed"
     )
     print(f"Results: {arguments.out}")
@@ -224,7 +279,7 @@ def dispatch(arguments: argparse.Namespace) -> int:
         if (
             arguments.output
             and arguments.decision_output
-            and arguments.output.resolve() == arguments.decision_output.resolve()
+            and paths_alias(arguments.output, arguments.decision_output)
         ):
             raise ConfigurationError("--output and --decision-output must be different paths")
         benchmark = load_analog_benchmark(arguments.contract)
@@ -241,8 +296,30 @@ def dispatch(arguments: argparse.Namespace) -> int:
                     json.dumps(decision, indent=2, sort_keys=True) + "\n",
                 )
             )
-        _write_outputs_atomically(outputs)
+        _write_outputs_atomically(
+            outputs,
+            force=arguments.force,
+            protected=(arguments.contract,),
+        )
         if not arguments.output:
+            print(rendered, end="")
+        return 0
+    if arguments.command == "catalog-benchmark":
+        benchmark = load_analog_benchmark(arguments.contract)
+        comparison = compare_optimizer_catalog(
+            benchmark,
+            budget=arguments.budget,
+            seed=arguments.seed,
+            population_size=arguments.population_size,
+        )
+        rendered = json.dumps(comparison, indent=2, sort_keys=True) + "\n"
+        if arguments.output:
+            _write_outputs_atomically(
+                [(arguments.output, rendered)],
+                force=arguments.force,
+                protected=(arguments.contract,),
+            )
+        else:
             print(rendered, end="")
         return 0
     raise ConfigurationError(f"unsupported command: {arguments.command}")
@@ -291,7 +368,13 @@ def _quality(arguments: argparse.Namespace) -> int:
         if arguments.compare:
             payload["compared_ledger"] = str(arguments.compare)
         _write_outputs_atomically(
-            [(arguments.output, json.dumps(payload, indent=2, sort_keys=True) + "\n")]
+            [(arguments.output, json.dumps(payload, indent=2, sort_keys=True) + "\n")],
+            force=arguments.force,
+            protected=tuple(
+                path
+                for path in (arguments.problem, arguments.ledger, arguments.compare)
+                if path is not None
+            ),
         )
         return 0
 
@@ -305,26 +388,19 @@ def _quality(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _write_outputs_atomically(outputs: list[tuple[Path, str]]) -> None:
-    """Stage every benchmark artifact before making a destination visible."""
+def _write_outputs_atomically(
+    outputs: list[tuple[Path, str]],
+    *,
+    force: bool,
+    protected: Sequence[Path],
+) -> None:
+    """Install a complete output set without clobbering any analyzed input."""
 
-    staged: list[tuple[Path, Path]] = []
-    try:
-        for destination, content in outputs:
-            descriptor, temporary_name = tempfile.mkstemp(
-                dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp"
-            )
-            temporary = Path(temporary_name)
-            staged.append((temporary, destination))
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-        for temporary, destination in staged:
-            os.replace(temporary, destination)
-    finally:
-        for temporary, _destination in staged:
-            temporary.unlink(missing_ok=True)
+    atomic_write_many(
+        tuple((destination, utf8(content)) for destination, content in outputs),
+        force=force,
+        protected=protected,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

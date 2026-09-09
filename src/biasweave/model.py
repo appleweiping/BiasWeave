@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, TypeAlias
 
 Scalar: TypeAlias = int | float | str
@@ -97,8 +99,13 @@ class Problem:
 @dataclass(frozen=True, slots=True)
 class Point:
     coordinates: tuple[float, ...]
-    values: dict[str, Scalar]
+    values: Mapping[str, Scalar]
     key: str
+
+    def __post_init__(self) -> None:
+        # ``frozen=True`` does not recursively freeze a dict.  Points cross the
+        # evaluator trust boundary, so retain a private immutable snapshot.
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,23 +113,26 @@ class Trial:
     trial_id: int
     point: Point
     status: TrialStatus
-    metrics: dict[str, float]
+    metrics: Mapping[str, float]
     error: str | None
     feasible: bool
     violation: float
     max_violation: float
     objective_vector: tuple[float, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metrics", MappingProxyType(dict(self.metrics)))
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "trial_id": self.trial_id,
             "point": {
                 "coordinates": list(self.point.coordinates),
-                "values": self.point.values,
+                "values": dict(self.point.values),
                 "key": self.point.key,
             },
             "status": self.status,
-            "metrics": self.metrics,
+            "metrics": dict(self.metrics),
             "error": self.error,
             "feasible": self.feasible,
             "violation": self.violation if math.isfinite(self.violation) else None,

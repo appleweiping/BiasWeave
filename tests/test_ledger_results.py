@@ -6,10 +6,11 @@ import pytest
 
 import biasweave.ledger as ledger_module
 from biasweave.dominance import assess, failed_trial
-from biasweave.encoding import make_point
+from biasweave.encoding import encode, make_point
 from biasweave.errors import CheckpointError
 from biasweave.ledger import TrialLedger, read_metadata, trial_from_dict, write_metadata
 from biasweave.model import OptimizationResult
+from biasweave.problem import parse_problem
 from biasweave.results import frontier_table, result_data, summary_markdown, write_result
 from tests.helpers import evaluator, make_problem
 
@@ -30,6 +31,56 @@ def test_ledger_round_trip_success_and_failed_trial(tmp_path):
     assert restored[0] == success
     assert restored[1].error == "simulator stopped"
     assert restored[1].as_dict()["violation"] is None
+
+
+def test_ledger_round_trip_preserves_positive_and_negative_large_integers(tmp_path) -> None:
+    positive = 2**53
+    negative = -(2**60)
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {
+                "p": {"kind": "integer", "low": positive, "high": positive + 2},
+                "n": {"kind": "integer", "low": negative, "high": negative + 2},
+            },
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+    values = {"p": positive + 1, "n": negative + 1}
+    point = make_point(problem, encode(problem, values))
+    trial = assess(problem, 0, point, {"a": 0.0, "b": 0.0})
+    ledger = TrialLedger(tmp_path / "large-integers.jsonl")
+    ledger.append((trial,))
+    restored = ledger.read()[0]
+    assert dict(restored.point.values) == values
+    assert restored.point.key == point.key
+
+
+def test_ledger_round_trip_preserves_a_signed_128_digit_integer(tmp_path) -> None:
+    low = -(10**127)
+    problem = parse_problem(
+        {
+            "schema_version": 1,
+            "variables": {"x": {"kind": "integer", "low": low, "high": low + 2}},
+            "objectives": [
+                {"metric": "a", "goal": "min", "scale": 1.0},
+                {"metric": "b", "goal": "min", "scale": 1.0},
+            ],
+            "constraints": [],
+        }
+    )
+    point = make_point(problem, (0.0,))
+    checked = assess(problem, 0, point, {"a": 0.0, "b": 0.0})
+    ledger = TrialLedger(tmp_path / "signed-128-digit.jsonl")
+    ledger.append((checked,))
+
+    restored = ledger.read()[0]
+    assert restored.point.values["x"] == low
+    assert restored.point.key == point.key
 
 
 def test_empty_append_does_not_create_file(tmp_path):
@@ -57,11 +108,11 @@ def test_ledger_ignores_only_truncated_final_line(tmp_path):
     [
         (lambda text: text.replace("{", '{"trial_id":0,', 1), "duplicate key"),
         (
-            lambda text: text.replace('"loss": 0.105025', '"loss": NaN'),
+            lambda text: text.replace('"loss": ', '"loss": NaN, "saved_loss": ', 1),
             "non-finite number",
         ),
         (
-            lambda text: text.replace('"trial_id": 0', '"trial_id": ' + "9" * 129),
+            lambda text: text.replace('"trial_id": 0', '"trial_id": ' + "9" * 130),
             "number longer",
         ),
     ],
@@ -143,7 +194,9 @@ def test_trial_from_dict_rejects_unknown_and_invalid_failed_penalties():
 def test_metadata_round_trip_replaces_previous_document(tmp_path):
     path = tmp_path / "run.json"
     write_metadata(path, {"version": 1, "count": 2})
-    write_metadata(path, {"version": 1, "count": 3})
+    with pytest.raises(CheckpointError, match="refusing to overwrite"):
+        write_metadata(path, {"version": 1, "count": 3})
+    write_metadata(path, {"version": 1, "count": 3}, force=True)
     assert read_metadata(path) == {"version": 1, "count": 3}
     assert not path.with_suffix(".json.tmp").exists()
 
@@ -165,7 +218,7 @@ def test_read_metadata_rejects_invalid_and_non_object_json(tmp_path):
         ('{"schema_version":NaN}', "non-finite number"),
         ('{"schema_version":Infinity}', "non-finite number"),
         ('{"schema_version":-Infinity}', "non-finite number"),
-        ('{"schema_version":' + "9" * 129 + "}", "number longer"),
+        ('{"schema_version":' + "9" * 130 + "}", "number longer"),
         ("[" * 65 + "0" + "]" * 65, "complexity"),
         (json.dumps([0] * 10_001), "complexity"),
     ],
@@ -212,6 +265,9 @@ def test_result_views_include_counts_frontier_and_variables(tmp_path):
     frontier_path, summary_path = write_result(result, tmp_path / "result")
     assert json.loads(frontier_path.read_text())["stop_reason"] == "budget"
     assert summary_path.read_text().startswith("# BiasWeave run summary")
+    with pytest.raises(CheckpointError, match="refusing to overwrite"):
+        write_result(result, tmp_path / "result")
+    write_result(result, tmp_path / "result", force=True)
 
 
 def test_empty_result_views_explain_absence_of_frontier():

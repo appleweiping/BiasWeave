@@ -10,11 +10,27 @@ Before submitting a change, run:
 ```bash
 ruff check .
 ruff format --check .
+mypy --python-version 3.11 src
+bandit -q -r src
 pytest --cov=biasweave --cov-report=term-missing
 python -m build
+twine check --strict dist/*
 ```
+
+Run `actionlint` when a workflow changes; CI applies its bundled ShellCheck rules
+to every workflow shell block as well as validating the YAML expressions.
 
 Algorithm changes need deterministic tests with a fixed seed, a statement of
 budget impact, and a changelog entry. Never replace a failed evaluation with a
 fabricated objective value. Declare significant automated assistance and review
 every generated change.
+
+Every pull-request commit must carry an author-matching Developer Certificate of
+Origin trailer. Use `git commit -s`. The `pull_request_target` DCO workflow runs
+only the verifier from the trusted base revision, requires the author-matching
+sign-off inside a syntactically valid final trailer block, and never executes
+pull-request code. It marks the event head pending, handles PR base edits, and
+binds the REST commit list to the event and final base repository/ref/SHA, head,
+and declared count before publishing success.
+Release tags are annotated SSH-signed tags and are verified against the signer
+policy on `main` before tag source or dependencies are executed.
