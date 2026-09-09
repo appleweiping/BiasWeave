@@ -42,7 +42,7 @@ def test_dco_runs_only_the_trusted_base_verifier() -> None:
     assert dco.count(".base.sha, .base.ref, .base.repo.full_name") == 3
     assert "state=pending" in dco
     assert "pull-commits.json" in dco
-    assert "python -I src/biasweave/dco.py" in dco
+    assert "python -I -S src/biasweave/dco.py" in dco
     assert "PYTHONPATH:" not in dco
     assert "ref: ${{ github.event.pull_request.head.sha }}" not in dco
     assert "git rev-list" not in ci
