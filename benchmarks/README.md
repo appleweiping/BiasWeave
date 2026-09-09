@@ -30,7 +30,7 @@ biasweave catalog-benchmark --contract benchmarks/manifest.json \
   --budget 64 --seed 17 --population-size 16 --output catalog.json
 ```
 
-This gives all seven strategies exactly 64 analytic-proxy evaluations and reports the same metrics for each. It is a
+This gives all eight strategies exactly 64 analytic-proxy evaluations and reports the same metrics for each. It is a
 reproducibility smoke benchmark, not a ranking: one seed has no uncertainty estimate, algorithms use different natural
 batch structures, and proxy performance is not circuit performance. A defensible comparative study should publish a
 seed set, retain every ledger, use the same simulator/corners and budget, and report distributions of feasible rate and
@@ -48,3 +48,14 @@ isolates the persistent decoded-key bookkeeping used by the catalog runner. It r
 requires every evaluation to remain unique at each scale. The runner now passes only newly told keys through optimizer
 state instead of copying the complete growing set on every batch. Timings remain descriptive because host load and
 Python builds vary.
+
+`python benchmarks/bayesian_acquisition.py --seeds 0,1,2,3 --budget 16` runs a bounded, independently executable
+acquisition regression on a smooth two-variable, two-objective trade-off. Every seed records both Bayesian and random
+evaluation counts, unique-point counts, frontier hypervolume against the declared reference, trajectory SHA-256, and
+the exact Bayesian run parameters. The report also binds the harness and imported package tree. This deliberately small
+analytic case checks that the real Gaussian-process acquisition path is useful at equal calls; it is not a universal
+optimizer ranking, a simulator result, or evidence of state-of-the-art circuit performance.
+`bayesian-acquisition-v1.json` records the default four-seed run, including each strategy's exact budget,
+hypervolume, effective parameters, trajectory digest, and the content identities of the harness and imported package
+tree. It identifies its producing environment; cross-platform numeric comparisons should use declared tolerances
+rather than silently replacing this evidence.

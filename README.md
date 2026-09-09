@@ -441,6 +441,13 @@ result = optimize_strategy(
 )
 ```
 
+Use `StrategyName.BAYES` for bounded one-at-a-time expected-improvement search. It models canonical numeric encodings
+and one-hot categorical values with a fixed-noise RBF surrogate, keeps at most 128 eligible observations, and evaluates
+at most 64 global/local candidates per proposal. Hard constraints remain separate: before the first feasible result it
+models successful constraint violation, and afterwards it models only feasible normalized multi-objective values.
+Failed evaluations are recorded but never converted into artificial training targets. This catalog strategy is
+fresh-run only and intentionally makes no checkpoint/resume promise.
+
 Advanced integrations can call `create_optimizer(...)` directly. Its strict synchronous `ask(count, seen_keys)` /
 `tell(trials)` protocol requires one complete ordered batch before the next ask; this is the boundary that separates
 deterministic algorithm state from evaluator scheduling.

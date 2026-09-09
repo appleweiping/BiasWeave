@@ -33,6 +33,15 @@ POPULATION_STRATEGIES = {
     StrategyName.NSGA2,
     StrategyName.MOEAD,
 }
+GOLDEN_STRATEGIES = (
+    StrategyName.WEAVE,
+    StrategyName.RANDOM,
+    StrategyName.SA,
+    StrategyName.PSO,
+    StrategyName.DE,
+    StrategyName.NSGA2,
+    StrategyName.MOEAD,
+)
 GOLDEN_FLOAT_ULPS = 4
 CONTRACT = Path("benchmarks/manifest.json")
 
@@ -335,10 +344,10 @@ def test_seeded_catalog_trajectories_match_the_versioned_semantic_golden_fixture
     ]
     assert golden["schema_version"] == 2
     assert golden["float_ulp_tolerance"] == GOLDEN_FLOAT_ULPS
-    assert list(golden["trajectories"]) == [strategy.value for strategy in StrategyName]
+    assert list(golden["trajectories"]) == [strategy.value for strategy in GOLDEN_STRATEGIES]
     problem = load_problem(golden["problem"])
     expected_variable_order = [variable.name for variable in problem.variables]
-    for strategy in StrategyName:
+    for strategy in GOLDEN_STRATEGIES:
         config = RunConfig(golden["budget"], seed=golden["seed"], batch_size=golden["batch_size"])
         arguments = {
             "problem": problem,
@@ -696,7 +705,7 @@ def test_catalog_run_persists_ledger_metadata_and_results(tmp_path) -> None:
         "completed_trials": 9,
         "evaluator_id": "tests:output",
         "max_stagnation": 0,
-        "package_version": "0.4.0",
+        "package_version": "0.5.0",
         "population_size": 4,
         "problem_sha256": "f" * 64,
         "schema_version": 1,

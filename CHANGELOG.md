@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 - 2026-09-09
+
+### Added
+
+- An original fixed-RBF Gaussian process with isolated 60-digit covariance and Cholesky arithmetic, exact duplicate
+  sufficient statistics, latent uncertainty and expected improvement. Independent high-precision elimination,
+  near-duplicate, signed-zero, cancellation and hostile Decimal-context tests guard numerical correctness.
+
+- A bounded sequential Bayesian catalog strategy (`bayes`) using the fixed-RBF surrogate and expected improvement.
+  Canonical numeric encodings and full categorical one-hot blocks avoid arbitrary category distances; feasible
+  normalized-Chebyshev objectives remain separate from pre-feasibility violation recovery, and failures never receive
+  synthetic targets. Training, features, objectives, candidate pools, and realized-weight diagnostics all have explicit
+  resource ceilings. An independently runnable, content-bound multi-seed acquisition benchmark records equal-call
+  Bayesian/random hypervolumes without making a universal ranking claim, while the original seven-strategy golden
+  trajectories remain unchanged.
+
 ## 0.4.0 - 2026-09-08
 
 ### Added

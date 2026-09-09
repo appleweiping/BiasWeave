@@ -88,9 +88,10 @@ ordering is restored.
 
 The archive remains external to strategy survival state. Consequently every strategy reports the same exact feasible
 Pareto definition even though SA has one chain, PSO and DE have incumbent populations, NSGA-II uses ranks and crowding,
-and MOEA/D uses decomposition neighborhoods. Stable trial ID and point-key tie-breaks make otherwise equal choices
-reproducible. A decoded point is never evaluated twice, including when integer or categorical coordinates collapse a
-large portion of the normalized cube.
+MOEA/D uses decomposition neighborhoods, and Bayesian search fits one bounded canonical-feature surrogate per
+sequential proposal. Stable trial ID and point-key tie-breaks make otherwise equal choices reproducible. A decoded
+point is never evaluated twice, including when integer or categorical coordinates collapse a large portion of the
+normalized cube.
 
 The boundary retains canonical immutable point and metric snapshots. A successful report is accepted only when its
 decoded values and key reproduce from the pending coordinates and its feasibility, violations, and minimized objective

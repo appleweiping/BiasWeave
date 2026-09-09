@@ -1,6 +1,6 @@
 # Optimizer catalog
 
-BiasWeave 0.4 provides seven real search policies behind one strict synchronous ask/tell contract. They share problem
+BiasWeave provides eight real search policies behind one strict synchronous ask/tell contract. They share problem
 decoding, hard-constraint assessment, exact Pareto reporting, decoded-point deduplication, ordered parallel evaluation,
 and seed handling. They do not share an implementation path or masquerade as aliases.
 
@@ -13,6 +13,7 @@ and seed handling. They do not share an implementation path or masquerade as ali
 | `de` | target population | DE/rand/1/bin mutation and crossover, one-to-one constraint-first replacement | continuous or lightly discrete black-box search |
 | `nsga2` | parent and offspring populations | binary rank/crowding tournament, simulated-binary crossover, polynomial mutation, elitist environmental selection | broad multi-objective fronts |
 | `moead` | weighted subproblems and neighborhoods | deterministic simplex weights, neighborhood DE variation, constraint-first weighted-Chebyshev replacement | decomposing fronts across objective trade-offs |
+| `bayes` | one pending point plus a bounded fixed-kernel Gaussian process | expected improvement over global and incumbent-local candidates; feasible normalized-Chebyshev objectives or a separate pre-feasibility violation model | expensive sequential evaluations with small data |
 
 All algorithms search the normalized unit cube. The central decoder alone turns a coordinate into a real, log-scaled,
 quantized, integer, or categorical value and resolves linked variables. Candidate identity is the SHA-256 of those
@@ -36,8 +37,9 @@ so temperature cannot buy a move across a hard-constraint boundary.
 
 ## Budget and reproducibility
 
-The runner asks for at most `min(batch_size, remaining_budget)` points. SA may return one because it is a single chain;
-population algorithms may stop at a generation or initialization boundary and continue in the next ask. A final partial
+The runner asks for at most `min(batch_size, remaining_budget)` points. SA and Bayesian search may return one because
+their state changes after each observation; population algorithms may stop at a generation or initialization boundary
+and continue in the next ask. A final partial
 batch is legal, and every returned point counts exactly once whether evaluation succeeds or fails. Integer, choice, and
 quantized-real products of at most 100,000 decoded points have a deterministic lazy enumeration fallback. They stop
 with `search_space_exhausted` only after complete coverage is proven. Larger or continuous domains use bounded random
@@ -53,9 +55,12 @@ compatible seeder has an explicit cross-version sequence guarantee in Python's [
 notes](https://docs.python.org/3/library/random.html#notes-on-reproducibility). A continuous logarithmic decode can
 therefore differ by a few binary64 ULPs across supported platforms even when its normalized random coordinates agree.
 
-`catalog-run.json` records the package version, strategy-schema version, and complete effective hyperparameters. The
-versioned `tests/data/optimizer-golden-v2.json` fixture pins all seven ordered seeded trajectories semantically: float
-coordinates and decoded float values have an explicit four-ULP ceiling, while scalar types, integers, choices,
+`catalog-run.json` records the package version, strategy-schema version, and complete effective hyperparameters. For
+Bayesian search this includes the exponential-simplex weight schedule and its seed; the optimizer also exposes a
+bounded immutable diagnostic of the last 128 realized weight vectors and their step numbers. The versioned
+`tests/data/optimizer-golden-v2.json` fixture continues to pin the original seven ordered seeded trajectories without
+rewriting their history: float coordinates and decoded float values have an explicit four-ULP ceiling, while scalar
+types, integers, choices,
 variable order, trial order, and lengths remain exact. Separate repeat and worker-count tests require bit-exact keys in
 one environment. A point key always hashes the exact decoded value map; values are never rounded for identity. Thus,
 two cross-platform points within the semantic ULP bound may intentionally have different keys, and an exact checkpoint
@@ -78,6 +83,16 @@ prevents hostile or accidental settings from allocating unbounded population and
 default is 16. Choose a population no larger than the budget if the run should reach adaptive proposals rather than
 spend the entire budget on initialization. MOEA/D requires at least one population slot per objective, accepts at most
 128 objectives, and uses non-repeating Halton-simplex weights after the objective extremes.
+
+Bayesian search is deliberately sequential and has no population option. It expands each decoded categorical value to
+a full one-hot block, retains canonical encoded scalars for numeric variables, and rejects a feature space above 64
+dimensions or a problem above 128 objectives before fitting. Its fixed RBF model uses an explicit `1e-6` observation
+noise, the newest 127 mode-eligible observations plus the constraint-first incumbent, and a 64-point candidate pool
+split between global samples and categorical-order-independent local proposals. Once any feasible observation exists,
+only feasible objective vectors enter its seeded normalized-Chebyshev model. Before that point, only successful
+infeasible violations enter a separate recovery model; evaluator failures never receive fabricated targets. The
+training window, candidate pool, objective count, feature expansion, and realized-weight history are explicitly
+bounded. Its seed is restricted to the signed 64-bit range before any text conversion or schedule hashing.
 
 ```python
 from biasweave import StrategyName, create_optimizer, optimize_strategy
@@ -104,3 +119,4 @@ metrics, recomputes constraint and objective assessment, and rejects a mismatch 
 weave runs use `run.json` for exact crash recovery and `biasweave resume`. Other catalog runs currently emit the common
 `trials.jsonl`, `frontier.json`, and `summary.md` plus final `catalog-run.json`; they deliberately do not advertise
 resume until all population and pending-generation state has a versioned checkpoint schema.
+Bayesian search is likewise a fresh-run policy and makes no checkpoint or resume promise.
