@@ -16,11 +16,11 @@
     "strategy_schema_version": {"const": 1},
     "problem_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "evaluator_id": {"type": "string", "minLength": 1, "maxLength": 4096},
-    "strategy": {"enum": ["weave", "random", "sa", "pso", "de", "nsga2", "moead"]},
+    "strategy": {"enum": ["weave", "random", "sa", "pso", "de", "nsga2", "moead", "bayes"]},
     "strategy_parameters": {
       "type": "object",
       "additionalProperties": false,
-      "maxProperties": 4,
+      "maxProperties": 12,
       "properties": {
         "population_size": {"type": "integer", "minimum": 4, "maximum": 512},
         "initial_temperature": {"type": "number", "exclusiveMinimum": 0},
@@ -34,7 +34,19 @@
         "crossover_probability": {"type": "number", "minimum": 0, "maximum": 1},
         "crossover_eta": {"type": "number", "exclusiveMinimum": 0},
         "mutation_eta": {"type": "number", "exclusiveMinimum": 0},
-        "neighborhood_size": {"type": "integer", "minimum": 4, "maximum": 512}
+        "neighborhood_size": {"type": "integer", "minimum": 4, "maximum": 512},
+        "initial_design_size": {"type": "integer", "minimum": 1, "maximum": 128},
+        "training_window_size": {"type": "integer", "minimum": 2, "maximum": 128},
+        "candidate_pool_size": {"type": "integer", "minimum": 4, "maximum": 64},
+        "feature_limit": {"const": 64},
+        "length_scale": {"type": "number", "minimum": 0.0001, "maximum": 10},
+        "noise_variance": {"type": "number", "minimum": 1e-10, "maximum": 1},
+        "local_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+        "local_radius": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "exploration": {"type": "number", "minimum": 0, "maximum": 1},
+        "feature_encoding": {"const": "canonical-unit-choice-one-hot-v1"},
+        "scalarization_schedule": {"const": "seeded-exponential-simplex-v1"},
+        "scalarization_seed": {"type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807}
       }
     },
     "population_size": {"type": ["integer", "null"], "minimum": 4, "maximum": 512},

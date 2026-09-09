@@ -9,12 +9,13 @@ from biasweave.benchmark import (
 )
 from biasweave.engine import optimize
 from biasweave.evaluator import CommandEvaluator, load_python_evaluator
-from biasweave.optimizers import AskTellOptimizer, StrategyName, create_optimizer
+from biasweave.optimizers import AskTellOptimizer, BayesianOptimizer, StrategyName, create_optimizer
 from biasweave.problem import load_problem
 from biasweave.strategy import optimize_strategy
 
 __all__ = [
     "AskTellOptimizer",
+    "BayesianOptimizer",
     "CommandEvaluator",
     "StrategyName",
     "compare_optimizer_catalog",

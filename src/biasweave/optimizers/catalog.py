@@ -9,6 +9,7 @@ from biasweave.errors import ConfigurationError
 from biasweave.model import Problem
 from biasweave.optimizers.annealing import SimulatedAnnealingOptimizer
 from biasweave.optimizers.base import AskTellOptimizer
+from biasweave.optimizers.bayesian import BayesianOptimizer
 from biasweave.optimizers.differential_evolution import DifferentialEvolutionOptimizer
 from biasweave.optimizers.moead import MOEADOptimizer
 from biasweave.optimizers.nsga2 import NSGA2Optimizer
@@ -27,6 +28,7 @@ class StrategyName(StrEnum):
     DE = "de"
     NSGA2 = "nsga2"
     MOEAD = "moead"
+    BAYES = "bayes"
 
 
 def parse_strategy(value: StrategyName | str) -> StrategyName:
@@ -59,6 +61,10 @@ def create_optimizer(
         if population_size is not None:
             raise ConfigurationError("population_size does not apply to sa")
         return SimulatedAnnealingOptimizer(problem, seed)
+    if selected is StrategyName.BAYES:
+        if population_size is not None:
+            raise ConfigurationError("population_size does not apply to bayes")
+        return BayesianOptimizer(problem, seed)
 
     size = population_size if population_size is not None else 16
     if selected is StrategyName.PSO:
@@ -117,6 +123,24 @@ def optimizer_parameters(
             "crossover_probability": candidate.crossover_probability,
             "crossover_eta": candidate.crossover_eta,
             "mutation_eta": candidate.mutation_eta,
+        }
+    if selected is StrategyName.BAYES:
+        candidate = optimizer
+        if not isinstance(candidate, BayesianOptimizer):
+            raise ConfigurationError("optimizer instance does not match bayes")
+        return {
+            "initial_design_size": candidate.initial_design_size,
+            "training_window_size": candidate.training_window_size,
+            "candidate_pool_size": candidate.candidate_pool_size,
+            "feature_limit": candidate.feature_limit,
+            "length_scale": candidate.length_scale,
+            "noise_variance": candidate.noise_variance,
+            "local_fraction": candidate.local_fraction,
+            "local_radius": candidate.local_radius,
+            "exploration": candidate.exploration,
+            "feature_encoding": candidate.feature_encoding,
+            "scalarization_schedule": candidate.scalarization_schedule,
+            "scalarization_seed": candidate.scalarization_seed,
         }
     candidate = optimizer
     if not isinstance(candidate, MOEADOptimizer):

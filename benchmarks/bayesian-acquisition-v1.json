@@ -1,0 +1,199 @@
+{
+  "aggregate": {
+    "bayesian_hypervolume_sum": 15.694225502487887,
+    "difference_sum": 0.4705724037999417,
+    "random_hypervolume_sum": 15.223653098687945
+  },
+  "benchmark": "biasweave-bayesian-acquisition-v1",
+  "configuration": {
+    "batch_size": 8,
+    "budget_per_strategy": 16,
+    "evaluator_id": "analytic:bayesian-acquisition-v1",
+    "reference_point": [
+      2.0,
+      2.0
+    ],
+    "workers": 1
+  },
+  "distribution_version": "0.5.0",
+  "environment": {
+    "implementation": "CPython",
+    "machine": "AMD64",
+    "python": "3.14.5",
+    "system": "Windows"
+  },
+  "harness_sha256": "87a456ee99bd928fc885407fa381c6c67578893da5a17e4f7f56f72b4bc1dd96",
+  "interpretation": "Deterministic analytic acquisition regression at equal evaluator calls; not a universal ranking, circuit result, or state-of-the-art claim.",
+  "package_tree_sha256": "e778fefa84570106a1a1f625564ffd048359aff5438bf6501f05a0de0f424477",
+  "problem_sha256": "9fafcc0531d8d62ff8bdb2ef3b51dfbe7be3c8b03f1020651159f756729e2d0f",
+  "report_sha256": "9a3aa1b692ae3ed9728807aba7d83477e649bd4a41822cf811baca238a2dd84e",
+  "results": [
+    {
+      "algorithms": {
+        "bayes": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 4,
+          "hypervolume": 3.9243433450710756,
+          "stop_reason": "budget",
+          "strategy_parameters": {
+            "candidate_pool_size": 64,
+            "exploration": 0.0,
+            "feature_encoding": "canonical-unit-choice-one-hot-v1",
+            "feature_limit": 64,
+            "initial_design_size": 8,
+            "length_scale": 0.25,
+            "local_fraction": 0.5,
+            "local_radius": 0.15,
+            "noise_variance": 1e-06,
+            "scalarization_schedule": "seeded-exponential-simplex-v1",
+            "scalarization_seed": 0,
+            "training_window_size": 128
+          },
+          "trajectory_sha256": "9ec48afe89f5c2aaeaa57a10d3182d1baa682656a959e5ad459c988d44c00009",
+          "unique_points": 16
+        },
+        "random": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 3,
+          "hypervolume": 3.650266073108778,
+          "stop_reason": "budget",
+          "strategy_parameters": {},
+          "trajectory_sha256": "f79d02272bc1dea0b7d7b8bcaa892baa83549b1600fa54422dd239b2bb078956",
+          "unique_points": 16
+        }
+      },
+      "budget_per_strategy": 16,
+      "hypervolume_difference_bayes_minus_random": 0.2740772719622977,
+      "seed": 0
+    },
+    {
+      "algorithms": {
+        "bayes": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 4,
+          "hypervolume": 3.921488178486584,
+          "stop_reason": "budget",
+          "strategy_parameters": {
+            "candidate_pool_size": 64,
+            "exploration": 0.0,
+            "feature_encoding": "canonical-unit-choice-one-hot-v1",
+            "feature_limit": 64,
+            "initial_design_size": 8,
+            "length_scale": 0.25,
+            "local_fraction": 0.5,
+            "local_radius": 0.15,
+            "noise_variance": 1e-06,
+            "scalarization_schedule": "seeded-exponential-simplex-v1",
+            "scalarization_seed": 1,
+            "training_window_size": 128
+          },
+          "trajectory_sha256": "7d2630acbd60eaa8eb136345a282a4bacc26def135a42f08d28effdfdbba7588",
+          "unique_points": 16
+        },
+        "random": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 4,
+          "hypervolume": 3.856380702752297,
+          "stop_reason": "budget",
+          "strategy_parameters": {},
+          "trajectory_sha256": "f1653e242d5b44ef6f14892e24f7558f18741a64c06c8f7c6187da0f4a037d5f",
+          "unique_points": 16
+        }
+      },
+      "budget_per_strategy": 16,
+      "hypervolume_difference_bayes_minus_random": 0.06510747573428688,
+      "seed": 1
+    },
+    {
+      "algorithms": {
+        "bayes": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 4,
+          "hypervolume": 3.935093978681976,
+          "stop_reason": "budget",
+          "strategy_parameters": {
+            "candidate_pool_size": 64,
+            "exploration": 0.0,
+            "feature_encoding": "canonical-unit-choice-one-hot-v1",
+            "feature_limit": 64,
+            "initial_design_size": 8,
+            "length_scale": 0.25,
+            "local_fraction": 0.5,
+            "local_radius": 0.15,
+            "noise_variance": 1e-06,
+            "scalarization_schedule": "seeded-exponential-simplex-v1",
+            "scalarization_seed": 2,
+            "training_window_size": 128
+          },
+          "trajectory_sha256": "72bfda23cca2de8773d043bb1e71c96e32c29b422a37ea843d56da5408486d5b",
+          "unique_points": 16
+        },
+        "random": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 4,
+          "hypervolume": 3.820979837636418,
+          "stop_reason": "budget",
+          "strategy_parameters": {},
+          "trajectory_sha256": "c8b8a31037c43e535e31cd9aa315ed1daaceadc4e5940023c29eb6241b6370a2",
+          "unique_points": 16
+        }
+      },
+      "budget_per_strategy": 16,
+      "hypervolume_difference_bayes_minus_random": 0.11411414104555817,
+      "seed": 2
+    },
+    {
+      "algorithms": {
+        "bayes": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 4,
+          "hypervolume": 3.913300000248251,
+          "stop_reason": "budget",
+          "strategy_parameters": {
+            "candidate_pool_size": 64,
+            "exploration": 0.0,
+            "feature_encoding": "canonical-unit-choice-one-hot-v1",
+            "feature_limit": 64,
+            "initial_design_size": 8,
+            "length_scale": 0.25,
+            "local_fraction": 0.5,
+            "local_radius": 0.15,
+            "noise_variance": 1e-06,
+            "scalarization_schedule": "seeded-exponential-simplex-v1",
+            "scalarization_seed": 3,
+            "training_window_size": 128
+          },
+          "trajectory_sha256": "2130bd01d2601dc65342bc6f92fa0baef18a22d49015e0fa7b24c8f7b897dec0",
+          "unique_points": 16
+        },
+        "random": {
+          "evaluations": 16,
+          "feasible": 16,
+          "frontier": 3,
+          "hypervolume": 3.8960264851904522,
+          "stop_reason": "budget",
+          "strategy_parameters": {},
+          "trajectory_sha256": "5c570de2466e5c2e90f8c92b54bb11a5978d2689f17597cdc303111d6795b017",
+          "unique_points": 16
+        }
+      },
+      "budget_per_strategy": 16,
+      "hypervolume_difference_bayes_minus_random": 0.01727351505779895,
+      "seed": 3
+    }
+  ],
+  "schema_version": 1,
+  "seeds": [
+    0,
+    1,
+    2,
+    3
+  ]
+}
