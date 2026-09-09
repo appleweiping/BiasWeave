@@ -32,5 +32,8 @@ sign-off inside a syntactically valid final trailer block, and never executes
 pull-request code. It marks the event head pending, handles PR base edits, and
 binds the REST commit list to the event and final base repository/ref/SHA, head,
 and declared count before publishing success.
+Protected `main` requires the `DCO / commits` status from GitHub Actions in
+addition to its existing platform tests, lint and CodeQL checks. A passing
+ordinary test workflow does not replace this trusted-base sign-off check.
 Release tags are annotated SSH-signed tags and are verified against the signer
 policy on `main` before tag source or dependencies are executed.
